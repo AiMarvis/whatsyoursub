@@ -14,6 +14,8 @@ import DashboardTabs from '@/components/dashboard/DashboardTabs'
 import StatusAlert from '@/components/dashboard/StatusAlert'
 import EmptyState from '@/components/dashboard/EmptyState'
 import SubscriptionsSkeleton from '@/components/dashboard/SubscriptionsSkeleton'
+import SubscriptionFormModal from '@/components/subscriptions/SubscriptionFormModal'
+import SubscriptionDetailModal from '@/components/subscriptions/SubscriptionDetailModal'
 
 // 대시보드 페이지 컴포넌트
 export default function DashboardPage() {
@@ -36,9 +38,18 @@ export default function DashboardPage() {
     loading: subscriptionsLoading,
     error: subscriptionsError,
     refresh: refreshSubscriptions,
+    addSubscription,
+    updateSubscription,
+    deleteSubscription,
     totalMonthlyAmount,
     upcomingPayments
   } = useSubscriptions(user?.id);
+
+  // 모달 상태 관리
+  const [formModalOpen, setFormModalOpen] = useState(false);
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [selectedSubscription, setSelectedSubscription] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // 통계 데이터 (useMemo로 최적화)
   const stats = useMemo(() => [
@@ -73,6 +84,69 @@ export default function DashboardPage() {
   ], [subscriptions.length, totalMonthlyAmount, upcomingPayments.length]);
 
   const router = useRouter()
+
+  // 구독 추가 모달 열기
+  const handleAddSubscription = () => {
+    setSelectedSubscription(null);
+    setFormModalOpen(true);
+  };
+
+  // 구독 편집 모달 열기
+  const handleEditSubscription = (subscription) => {
+    setSelectedSubscription(subscription);
+    setDetailModalOpen(false);
+    setFormModalOpen(true);
+  };
+
+  // 구독 상세 정보 모달 열기
+  const handleViewSubscription = (subscription) => {
+    setSelectedSubscription(subscription);
+    setDetailModalOpen(true);
+  };
+
+  // 구독 폼 제출 처리
+  const handleFormSubmit = async (data) => {
+    try {
+      setIsSubmitting(true);
+      
+      let result;
+      if (selectedSubscription) {
+        // 기존 구독 수정
+        result = await updateSubscription(selectedSubscription.id, data);
+      } else {
+        // 새 구독 추가
+        result = await addSubscription(data);
+      }
+      
+      if (result.success) {
+        setFormModalOpen(false);
+        refreshSubscriptions();
+      } else {
+        console.error('구독 저장 실패:', result.error);
+        // 에러 처리 (필요시 상태 메시지 표시)
+      }
+    } catch (error) {
+      console.error('구독 저장 중 오류:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // 구독 삭제 처리
+  const handleDeleteSubscription = async (subscription) => {
+    try {
+      const result = await deleteSubscription(subscription.id);
+      if (result.success) {
+        setDetailModalOpen(false);
+        refreshSubscriptions();
+      } else {
+        console.error('구독 삭제 실패:', result.error);
+        // 에러 처리 (필요시 상태 메시지 표시)
+      }
+    } catch (error) {
+      console.error('구독 삭제 중 오류:', error);
+    }
+  };
 
   // 로딩 중 상태
   if (authLoading) {
@@ -187,7 +261,16 @@ export default function DashboardPage() {
           {/* 개요 탭 */}
           {activeTab === 'overview' && (
             <div>
-              <h3 className="text-xl font-bold mb-4">구독 개요</h3>
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold">구독 개요</h3>
+                <button 
+                  className="btn btn-primary btn-sm"
+                  onClick={handleAddSubscription}
+                >
+                  구독 추가
+                </button>
+              </div>
+              
               {/* 구독이 없는 경우 */}
               {!subscriptionsLoading && subscriptions.length === 0 ? (
                 <EmptyState
@@ -195,7 +278,7 @@ export default function DashboardPage() {
                   description="아직 등록된 구독이 없습니다. 새로운 구독을 추가해보세요."
                   icon={CreditCard}
                   actionLabel="구독 추가하기"
-                  onAction={() => setActiveTab('subscriptions')}
+                  onAction={handleAddSubscription}
                 />
               ) : subscriptionsLoading ? (
                 <SubscriptionsSkeleton />
@@ -203,7 +286,11 @@ export default function DashboardPage() {
                 <div className="grid gap-4">
                   {/* 구독 목록 표시 (3개만) */}
                   {subscriptions.slice(0, 3).map((subscription) => (
-                    <div key={subscription.id} className="card bg-base-100 shadow-sm border border-base-200">
+                    <div 
+                      key={subscription.id} 
+                      className="card bg-base-100 shadow-sm border border-base-200 hover:shadow-md transition-all cursor-pointer"
+                      onClick={() => handleViewSubscription(subscription)}
+                    >
                       <div className="card-body p-5">
                         <div className="flex items-start gap-4">
                           <div className="w-12 h-12 bg-base-300 rounded-lg flex items-center justify-center">
@@ -250,31 +337,38 @@ export default function DashboardPage() {
             </div>
           )}
           
-          {/* 나머지 탭 콘텐츠는 필요에 따라 구현 */}
+          {/* 구독 탭 */}
           {activeTab === 'subscriptions' && (
             <div>
-              <h3 className="text-xl font-bold mb-4">구독 관리</h3>
-              {subscriptionsLoading ? (
-                <SubscriptionsSkeleton />
-              ) : subscriptionsError ? (
-                <StatusAlert
-                  type="error"
-                  message="구독 정보 로딩 실패"
-                  description={subscriptionsError}
-                  onClose={() => refreshSubscriptions()}
-                />
-              ) : subscriptions.length === 0 ? (
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold">구독 관리</h3>
+                <button 
+                  className="btn btn-primary btn-sm"
+                  onClick={handleAddSubscription}
+                >
+                  구독 추가
+                </button>
+              </div>
+              
+              {/* 구독 목록 */}
+              {!subscriptionsLoading && subscriptions.length === 0 ? (
                 <EmptyState
                   title="구독 정보 없음"
                   description="아직 등록된 구독이 없습니다. 새로운 구독을 추가해보세요."
                   icon={CreditCard}
                   actionLabel="구독 추가하기"
+                  onAction={handleAddSubscription}
                 />
+              ) : subscriptionsLoading ? (
+                <SubscriptionsSkeleton />
               ) : (
                 <div className="grid gap-4">
-                  {/* 구독 목록 (전체) */}
                   {subscriptions.map((subscription) => (
-                    <div key={subscription.id} className="card bg-base-100 shadow-sm border border-base-200">
+                    <div 
+                      key={subscription.id} 
+                      className="card bg-base-100 shadow-sm border border-base-200 hover:shadow-md transition-all cursor-pointer"
+                      onClick={() => handleViewSubscription(subscription)}
+                    >
                       <div className="card-body p-5">
                         <div className="flex items-start gap-4">
                           <div className="w-12 h-12 bg-base-300 rounded-lg flex items-center justify-center">
@@ -310,10 +404,26 @@ export default function DashboardPage() {
               )}
             </div>
           )}
-          
-          {/* 다른 탭 내용은 필요에 따라 추가 */}
         </div>
       </main>
+
+      {/* 구독 추가/편집 모달 */}
+      <SubscriptionFormModal
+        isOpen={formModalOpen}
+        onClose={() => setFormModalOpen(false)}
+        onSubmit={handleFormSubmit}
+        initialData={selectedSubscription}
+        isLoading={isSubmitting}
+      />
+
+      {/* 구독 상세 정보 모달 */}
+      <SubscriptionDetailModal
+        isOpen={detailModalOpen}
+        onClose={() => setDetailModalOpen(false)}
+        subscription={selectedSubscription}
+        onEdit={handleEditSubscription}
+        onDelete={handleDeleteSubscription}
+      />
     </div>
   )
 } 
