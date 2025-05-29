@@ -1,74 +1,81 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react'
+import { CreditCard, BarChart3, TrendingUp, Calendar, DollarSign, Package, Bell, Sparkles, AlertTriangle } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { User, LogOut, Settings, CreditCard, BarChart3, TrendingUp, Plus, ArrowRight, Sparkles, Calendar, DollarSign, Package, CheckCircle, Bell, FileText, Info, HelpCircle, Search, Filter, Eye } from 'lucide-react'
-import { supabase, signOut } from '@/lib/supabase'
 
+// 커스텀 훅
+import { useSessionManager } from '@/hooks/useSessionManager'
+import { useSubscriptions } from '@/hooks/useSubscriptions'
+
+// 컴포넌트
+import StatCard from '@/components/dashboard/StatCard'
+import DashboardTabs from '@/components/dashboard/DashboardTabs'
+import StatusAlert from '@/components/dashboard/StatusAlert'
+import EmptyState from '@/components/dashboard/EmptyState'
+import SubscriptionsSkeleton from '@/components/dashboard/SubscriptionsSkeleton'
+
+// 대시보드 페이지 컴포넌트
 export default function DashboardPage() {
-  const [user, setUser] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState('overview')
+  // 세션 관리 (커스텀 훅 사용)
+  const { 
+    user, 
+    loading: authLoading, 
+    sessionError, 
+    showSuccessMessage, 
+    signOut,
+    toggleSuccessMessage 
+  } = useSessionManager();
+  
+  // 탭 관리
+  const [activeTab, setActiveTab] = useState('overview');
+  
+  // 구독 정보 관리 (커스텀 훅 사용)
+  const {
+    subscriptions,
+    loading: subscriptionsLoading,
+    error: subscriptionsError,
+    refresh: refreshSubscriptions,
+    totalMonthlyAmount,
+    upcomingPayments
+  } = useSubscriptions(user?.id);
+
+  // 통계 데이터 (useMemo로 최적화)
+  const stats = useMemo(() => [
+    { 
+      title: '활성 구독', 
+      value: subscriptions.length.toString(), 
+      subtitle: '구독 중인 서비스', 
+      icon: CreditCard, 
+      color: 'primary' 
+    },
+    { 
+      title: '월 지출', 
+      value: `${totalMonthlyAmount.toLocaleString()}원`, 
+      subtitle: '모든 구독 서비스 합계', 
+      icon: DollarSign, 
+      color: 'secondary' 
+    },
+    { 
+      title: '다가오는 결제', 
+      value: upcomingPayments.length.toString(), 
+      subtitle: '이번 주 예정', 
+      icon: Calendar, 
+      color: 'accent' 
+    },
+    { 
+      title: '절약 금액', 
+      value: '0원', 
+      subtitle: '최적화 제안', 
+      icon: TrendingUp, 
+      color: 'info' 
+    }
+  ], [subscriptions.length, totalMonthlyAmount, upcomingPayments.length]);
+
   const router = useRouter()
 
-  useEffect(() => {
-    // URL에서 세션 처리 (OAuth 콜백)
-    const handleAuthCallback = async () => {
-      const { data, error } = await supabase.auth.getSession()
-      
-      if (error) {
-        console.error('세션 오류:', error)
-        router.push(`/auth/login?error=session_error&message=${encodeURIComponent(error.message)}`)
-        return
-      }
-
-      if (data.session) {
-        setUser(data.session.user)
-        setLoading(false)
-      } else {
-        // 현재 사용자 확인
-        const { data: { user }, error: userError } = await supabase.auth.getUser()
-        
-        if (userError || !user) {
-          console.log('No user found, redirecting to login')
-          router.push('/auth/login')
-          return
-        }
-        
-        setUser(user)
-        setLoading(false)
-      }
-    }
-
-    handleAuthCallback()
-
-    // 인증 상태 변화 감지
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        console.log('Auth state changed:', event, session)
-        
-        if (event === 'SIGNED_OUT' || !session) {
-          router.push('/auth/login')
-        } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          setUser(session.user)
-          setLoading(false)
-        }
-      }
-    )
-
-    return () => subscription.unsubscribe()
-  }, [router])
-
-  const handleSignOut = async () => {
-    try {
-      await signOut()
-      router.push('/auth/login')
-    } catch (error) {
-      console.error('로그아웃 실패:', error)
-    }
-  }
-
-  if (loading) {
+  // 로딩 중 상태
+  if (authLoading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-r from-primary/5 to-secondary/5">
         <div className="relative w-24 h-24 mb-6">
@@ -82,12 +89,37 @@ export default function DashboardPage() {
     )
   }
 
+  // 인증되지 않은 상태
   if (!user) {
-    return null
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-r from-primary/5 to-secondary/5">
+        <div className="card w-96 bg-base-100 shadow-xl">
+          <div className="card-body">
+            <h2 className="card-title justify-center text-error">인증 오류</h2>
+            <p className="text-center">{sessionError || '인증 세션을 찾을 수 없습니다. 다시 로그인해주세요.'}</p>
+            <div className="card-actions justify-center mt-4">
+              <button className="btn btn-primary" onClick={() => router.push('/auth/login')}>
+                로그인 페이지로 이동
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div className="min-h-screen bg-base-100">
+      {/* 세션 만료 경고 */}
+      {sessionError && (
+        <StatusAlert
+          type="warning"
+          message={sessionError}
+          description="5초 후 로그인 페이지로 이동합니다."
+          className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 w-auto max-w-3xl"
+        />
+      )}
+      
       {/* 메인 콘텐츠 */}
       <main className="container mx-auto px-4 py-8">
         {/* 환영 메시지 */}
@@ -98,7 +130,7 @@ export default function DashboardPage() {
             </div>
             <div>
               <h2 className="text-3xl font-bold">
-                안녕하세요, {user.user_metadata?.full_name || '사용자'}님! 👋
+                안녕하세요, {user.user_metadata?.full_name || user.email || '사용자'}님! 👋
               </h2>
               <p className="text-base-content/70">
                 오늘도 스마트한 AI 구독 관리를 시작해보세요.
@@ -112,329 +144,176 @@ export default function DashboardPage() {
                 <span className="absolute top-0 right-0 w-2 h-2 bg-primary rounded-full"></span>
                 <span className="sr-only">알림</span>
               </button>
-              <button className="btn btn-circle btn-ghost btn-sm group" onClick={handleSignOut}>
-                <LogOut className="w-5 h-5 group-hover:text-error transition-colors" />
+              <button className="btn btn-circle btn-ghost btn-sm group" onClick={signOut}>
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 group-hover:text-error transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
                 <span className="sr-only">로그아웃</span>
               </button>
             </div>
           </div>
           
-          {/* 성공 메시지 - Glassmorphism 적용 */}
-          <div className="alert bg-success/10 backdrop-blur-sm border border-success/20 shadow-lg text-success rounded-xl">
-            <div className="flex items-center gap-3">
-              <CheckCircle className="w-6 h-6" />
-              <div>
-                <span className="font-medium">로그인에 성공했습니다!</span>
-                <p className="text-sm opacity-80">이제 모든 기능을 사용할 수 있습니다.</p>
-              </div>
-            </div>
-            <button className="btn btn-sm btn-ghost btn-circle ml-auto">
-              <span className="sr-only">닫기</span>
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
+          {/* 성공 메시지 */}
+          {showSuccessMessage && (
+            <StatusAlert
+              type="success"
+              message="로그인에 성공했습니다!"
+              description="이제 모든 기능을 사용할 수 있습니다."
+              onClose={() => toggleSuccessMessage(false)}
+            />
+          )}
         </div>
 
         {/* 탭 네비게이션 */}
-        <div className="mb-8">
-          <div className="flex overflow-x-auto gap-2 pb-2">
-            <button 
-              onClick={() => setActiveTab('overview')} 
-              className={`btn ${activeTab === 'overview' ? 'btn-primary' : 'btn-ghost'} rounded-full transition-all duration-300`}
-            >
-              <BarChart3 className="w-4 h-4 mr-2" />
-              개요
-            </button>
-            <button 
-              onClick={() => setActiveTab('subscriptions')} 
-              className={`btn ${activeTab === 'subscriptions' ? 'btn-primary' : 'btn-ghost'} rounded-full transition-all duration-300`}
-            >
-              <CreditCard className="w-4 h-4 mr-2" />
-              구독 관리
-            </button>
-            <button 
-              onClick={() => setActiveTab('tools')} 
-              className={`btn ${activeTab === 'tools' ? 'btn-primary' : 'btn-ghost'} rounded-full transition-all duration-300`}
-            >
-              <Package className="w-4 h-4 mr-2" />
-              AI 툴
-            </button>
-            <button 
-              onClick={() => setActiveTab('reports')} 
-              className={`btn ${activeTab === 'reports' ? 'btn-primary' : 'btn-ghost'} rounded-full transition-all duration-300`}
-            >
-              <FileText className="w-4 h-4 mr-2" />
-              리포트
-            </button>
-            <button 
-              onClick={() => setActiveTab('settings')} 
-              className={`btn ${activeTab === 'settings' ? 'btn-primary' : 'btn-ghost'} rounded-full transition-all duration-300`}
-            >
-              <Settings className="w-4 h-4 mr-2" />
-              설정
-            </button>
-          </div>
-        </div>
+        <DashboardTabs
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+        />
 
-        {/* 통계 카드 - Glassmorphism 스타일 적용 */}
+        {/* 통계 카드 */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
-          <div className="card bg-gradient-to-br from-primary/10 to-primary/5 backdrop-blur-sm border border-primary/20 hover:shadow-lg transition-all hover:-translate-y-1 duration-300">
-            <div className="card-body">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-base-content/60 mb-1">활성 구독</p>
-                  <p className="text-3xl font-bold text-primary">0</p>
-                  <p className="text-xs text-base-content/50 mt-1">구독 중인 서비스</p>
-                </div>
-                <div className="w-12 h-12 bg-primary/10 rounded-xl flex items-center justify-center group-hover:bg-primary/20 transition-all">
-                  <CreditCard className="w-6 h-6 text-primary group-hover:scale-110 transition-transform" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="card bg-gradient-to-br from-secondary/10 to-secondary/5 backdrop-blur-sm border border-secondary/20 hover:shadow-lg transition-all hover:-translate-y-1 duration-300">
-            <div className="card-body">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-base-content/60 mb-1">월 비용</p>
-                  <p className="text-3xl font-bold text-secondary">₩0</p>
-                  <p className="text-xs text-base-content/50 mt-1">이번 달 지출</p>
-                </div>
-                <div className="w-12 h-12 bg-secondary/10 rounded-xl flex items-center justify-center">
-                  <DollarSign className="w-6 h-6 text-secondary" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="card bg-gradient-to-br from-accent/10 to-accent/5 backdrop-blur-sm border border-accent/20 hover:shadow-lg transition-all hover:-translate-y-1 duration-300">
-            <div className="card-body">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-base-content/60 mb-1">연 비용</p>
-                  <p className="text-3xl font-bold text-accent">₩0</p>
-                  <p className="text-xs text-base-content/50 mt-1">연간 예상 지출</p>
-                </div>
-                <div className="w-12 h-12 bg-accent/10 rounded-xl flex items-center justify-center">
-                  <TrendingUp className="w-6 h-6 text-accent" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="card bg-gradient-to-br from-info/10 to-info/5 backdrop-blur-sm border border-info/20 hover:shadow-lg transition-all hover:-translate-y-1 duration-300">
-            <div className="card-body">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-base-content/60 mb-1">다음 결제일</p>
-                  <p className="text-3xl font-bold text-info">--</p>
-                  <p className="text-xs text-base-content/50 mt-1">가장 가까운 결제</p>
-                </div>
-                <div className="w-12 h-12 bg-info/10 rounded-xl flex items-center justify-center">
-                  <Calendar className="w-6 h-6 text-info" />
-                </div>
-              </div>
-            </div>
-          </div>
+          {stats.map((stat, index) => (
+            <StatCard
+              key={index}
+              title={stat.title}
+              value={stat.value}
+              subtitle={stat.subtitle}
+              icon={stat.icon}
+              color={stat.color}
+            />
+          ))}
         </div>
 
-        {/* 차트 및 데이터 시각화 섹션 */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-          {/* 데이터 시각화 - 월별 지출 */}
-          <div className="lg:col-span-2 card bg-base-100 shadow-lg border border-base-200">
-            <div className="card-body">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="card-title">월별 구독 지출</h3>
-                <div className="dropdown dropdown-end">
-                  <label tabIndex={0} className="btn btn-ghost btn-sm btn-circle">
-                    <Filter className="w-4 h-4" />
-                  </label>
-                  <ul tabIndex={0} className="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-52 border border-base-200">
-                    <li><a>최근 3개월</a></li>
-                    <li><a>최근 6개월</a></li>
-                    <li><a>최근 1년</a></li>
-                    <li><a>모든 기간</a></li>
-                  </ul>
+        {/* 탭 콘텐츠 */}
+        <div className="mt-8">
+          {/* 개요 탭 */}
+          {activeTab === 'overview' && (
+            <div>
+              <h3 className="text-xl font-bold mb-4">구독 개요</h3>
+              {/* 구독이 없는 경우 */}
+              {!subscriptionsLoading && subscriptions.length === 0 ? (
+                <EmptyState
+                  title="구독 정보 없음"
+                  description="아직 등록된 구독이 없습니다. 새로운 구독을 추가해보세요."
+                  icon={CreditCard}
+                  actionLabel="구독 추가하기"
+                  onAction={() => setActiveTab('subscriptions')}
+                />
+              ) : subscriptionsLoading ? (
+                <SubscriptionsSkeleton />
+              ) : (
+                <div className="grid gap-4">
+                  {/* 구독 목록 표시 (3개만) */}
+                  {subscriptions.slice(0, 3).map((subscription) => (
+                    <div key={subscription.id} className="card bg-base-100 shadow-sm border border-base-200">
+                      <div className="card-body p-5">
+                        <div className="flex items-start gap-4">
+                          <div className="w-12 h-12 bg-base-300 rounded-lg flex items-center justify-center">
+                            <Package className="w-6 h-6 text-base-content" />
+                          </div>
+                          <div className="flex-1">
+                            <h4 className="font-semibold">{subscription.name || '구독 서비스'}</h4>
+                            <p className="text-sm text-base-content/70">{subscription.description || '설명 없음'}</p>
+                            <div className="grid grid-cols-3 gap-4 mt-2 text-sm">
+                              <div>
+                                <span className="text-base-content/60">결제 주기:</span>
+                                <span className="ml-1">{subscription.billing_cycle || '월간'}</span>
+                              </div>
+                              <div>
+                                <span className="text-base-content/60">다음 결제:</span>
+                                <span className="ml-1">{subscription.next_payment_date || '-'}</span>
+                              </div>
+                              <div>
+                                <span className="text-base-content/60">카테고리:</span>
+                                <span className="ml-1">{subscription.category || '-'}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="badge badge-primary mb-2">{subscription.price?.toLocaleString() || '0'}원</div>
+                            <p className="text-xs text-base-content/50">{subscription.billing_cycle || '월간'}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  
+                  {/* 더보기 버튼 */}
+                  {subscriptions.length > 3 && (
+                    <button 
+                      className="btn btn-outline btn-sm w-full mt-2"
+                      onClick={() => setActiveTab('subscriptions')}
+                    >
+                      모든 구독 보기 ({subscriptions.length})
+                    </button>
+                  )}
                 </div>
-              </div>
-              <div className="h-64 flex items-center justify-center bg-base-200/50 rounded-lg">
-                <div className="text-center">
-                  <Info className="w-10 h-10 mx-auto mb-4 text-base-content/40" />
-                  <p className="text-base-content/60">구독을 추가하면 데이터 시각화가 표시됩니다.</p>
-                </div>
-              </div>
+              )}
             </div>
-          </div>
+          )}
           
-          {/* 카테고리별 구독 */}
-          <div className="card bg-base-100 shadow-lg border border-base-200">
-            <div className="card-body">
-              <h3 className="card-title mb-4">카테고리별 구독</h3>
-              <div className="h-48 flex items-center justify-center bg-base-200/50 rounded-lg mb-4">
-                <div className="text-center">
-                  <BarChart3 className="w-10 h-10 mx-auto mb-4 text-base-content/40" />
-                  <p className="text-base-content/60">카테고리 데이터 없음</p>
+          {/* 나머지 탭 콘텐츠는 필요에 따라 구현 */}
+          {activeTab === 'subscriptions' && (
+            <div>
+              <h3 className="text-xl font-bold mb-4">구독 관리</h3>
+              {subscriptionsLoading ? (
+                <SubscriptionsSkeleton />
+              ) : subscriptionsError ? (
+                <StatusAlert
+                  type="error"
+                  message="구독 정보 로딩 실패"
+                  description={subscriptionsError}
+                  onClose={() => refreshSubscriptions()}
+                />
+              ) : subscriptions.length === 0 ? (
+                <EmptyState
+                  title="구독 정보 없음"
+                  description="아직 등록된 구독이 없습니다. 새로운 구독을 추가해보세요."
+                  icon={CreditCard}
+                  actionLabel="구독 추가하기"
+                />
+              ) : (
+                <div className="grid gap-4">
+                  {/* 구독 목록 (전체) */}
+                  {subscriptions.map((subscription) => (
+                    <div key={subscription.id} className="card bg-base-100 shadow-sm border border-base-200">
+                      <div className="card-body p-5">
+                        <div className="flex items-start gap-4">
+                          <div className="w-12 h-12 bg-base-300 rounded-lg flex items-center justify-center">
+                            <Package className="w-6 h-6 text-base-content" />
+                          </div>
+                          <div className="flex-1">
+                            <h4 className="font-semibold">{subscription.name || '구독 서비스'}</h4>
+                            <p className="text-sm text-base-content/70">{subscription.description || '설명 없음'}</p>
+                            <div className="grid grid-cols-3 gap-4 mt-2 text-sm">
+                              <div>
+                                <span className="text-base-content/60">결제 주기:</span>
+                                <span className="ml-1">{subscription.billing_cycle || '월간'}</span>
+                              </div>
+                              <div>
+                                <span className="text-base-content/60">다음 결제:</span>
+                                <span className="ml-1">{subscription.next_payment_date || '-'}</span>
+                              </div>
+                              <div>
+                                <span className="text-base-content/60">카테고리:</span>
+                                <span className="ml-1">{subscription.category || '-'}</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="badge badge-primary mb-2">{subscription.price?.toLocaleString() || '0'}원</div>
+                            <p className="text-xs text-base-content/50">{subscription.billing_cycle || '월간'}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="bg-base-200/30 p-2 rounded-lg text-center">
-                  <p className="text-xs text-base-content/60">생성형 AI</p>
-                  <p className="font-bold">₩0</p>
-                </div>
-                <div className="bg-base-200/30 p-2 rounded-lg text-center">
-                  <p className="text-xs text-base-content/60">비디오 AI</p>
-                  <p className="font-bold">₩0</p>
-                </div>
-                <div className="bg-base-200/30 p-2 rounded-lg text-center">
-                  <p className="text-xs text-base-content/60">이미지 AI</p>
-                  <p className="font-bold">₩0</p>
-                </div>
-                <div className="bg-base-200/30 p-2 rounded-lg text-center">
-                  <p className="text-xs text-base-content/60">코딩 AI</p>
-                  <p className="font-bold">₩0</p>
-                </div>
-              </div>
+              )}
             </div>
-          </div>
-        </div>
-
-        {/* 빠른 작업 섹션 - 카드 디자인 개선 */}
-        <h3 className="text-xl font-bold mb-4">빠른 작업</h3>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-10">
-          {/* 구독 추가 카드 */}
-          <div className="card bg-gradient-to-br from-primary/5 to-secondary/5 border border-base-300 hover:shadow-xl transition-all hover:-translate-y-2 duration-300 group">
-            <div className="card-body">
-              <div className="flex items-start justify-between mb-4">
-                <div className="w-14 h-14 bg-gradient-to-r from-primary to-secondary rounded-2xl flex items-center justify-center group-hover:scale-105 transition-transform">
-                  <Plus className="w-7 h-7 text-white" />
-                </div>
-                <span className="badge badge-primary badge-outline">추천</span>
-              </div>
-              <h3 className="card-title text-xl mb-2">구독 추가하기</h3>
-              <p className="text-base-content/70 mb-4">
-                사용 중인 AI 서비스를 등록하고 비용을 추적하세요. ChatGPT, Claude, Midjourney 등 모든 서비스를 지원합니다.
-              </p>
-              <div className="card-actions">
-                <button className="btn btn-primary btn-sm gap-2 w-full group">
-                  <span className="flex items-center gap-2">
-                    구독 추가 <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                  </span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* 비용 분석 카드 */}
-          <div className="card bg-gradient-to-br from-secondary/5 to-accent/5 border border-base-300 hover:shadow-xl transition-all hover:-translate-y-2 duration-300 group">
-            <div className="card-body">
-              <div className="flex items-start justify-between mb-4">
-                <div className="w-14 h-14 bg-gradient-to-r from-secondary to-accent rounded-2xl flex items-center justify-center group-hover:scale-105 transition-transform">
-                  <BarChart3 className="w-7 h-7 text-white" />
-                </div>
-              </div>
-              <h3 className="card-title text-xl mb-2">비용 분석</h3>
-              <p className="text-base-content/70 mb-4">
-                월별, 카테고리별 지출을 분석하고 비용 절감 기회를 찾아보세요. 시각적 차트로 한눈에 파악할 수 있습니다.
-              </p>
-              <div className="card-actions">
-                <button className="btn btn-secondary btn-sm gap-2 w-full group">
-                  <span className="flex items-center gap-2">
-                    분석 보기 <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                  </span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* AI 툴 탐색 카드 */}
-          <div className="card bg-gradient-to-br from-accent/5 to-info/5 border border-base-300 hover:shadow-xl transition-all hover:-translate-y-2 duration-300 group">
-            <div className="card-body">
-              <div className="flex items-start justify-between mb-4">
-                <div className="w-14 h-14 bg-gradient-to-r from-accent to-info rounded-2xl flex items-center justify-center group-hover:scale-105 transition-transform">
-                  <Package className="w-7 h-7 text-white" />
-                </div>
-              </div>
-              <h3 className="card-title text-xl mb-2">AI 툴 탐색</h3>
-              <p className="text-base-content/70 mb-4">
-                새로운 AI 도구를 발견하고, 실제 사용자 리뷰를 확인하세요. 카테고리별로 정리된 툴을 쉽게 찾을 수 있습니다.
-              </p>
-              <div className="card-actions">
-                <button className="btn btn-accent btn-sm gap-2 w-full group">
-                  <span className="flex items-center gap-2">
-                    툴 둘러보기 <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                  </span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* 시작하기 가이드 - Glassmorphism과 3D 효과 적용 */}
-        <div className="card bg-gradient-to-r from-primary/10 via-secondary/10 to-accent/10 backdrop-blur-sm shadow-xl relative overflow-hidden">
-          {/* 배경 장식 요소 */}
-          <div className="absolute -top-20 -right-20 w-40 h-40 bg-primary/10 rounded-full blur-2xl"></div>
-          <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-secondary/10 rounded-full blur-2xl"></div>
+          )}
           
-          <div className="card-body p-8 md:p-10 relative z-10">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-md hover:shadow-lg hover:scale-105 transition-all">
-                <Sparkles className="w-6 h-6 text-primary" />
-              </div>
-              <h3 className="text-2xl font-bold">빠른 시작 가이드</h3>
-            </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-white/70 dark:bg-base-100/70 backdrop-blur-sm rounded-xl p-6 shadow-sm hover:shadow-md transition-all hover:-translate-y-1 duration-300 border border-white/20 dark:border-base-300/20">
-                <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center mb-4">
-                  <span className="text-xl font-bold text-primary">1</span>
-                </div>
-                <h4 className="font-bold mb-2">구독 등록하기</h4>
-                <p className="text-sm text-base-content/70">
-                  사용 중인 AI 서비스를 추가하고 결제 주기와 금액을 설정하세요.
-                </p>
-              </div>
-              
-              <div className="bg-white/70 dark:bg-base-100/70 backdrop-blur-sm rounded-xl p-6 shadow-sm hover:shadow-md transition-all hover:-translate-y-1 duration-300 border border-white/20 dark:border-base-300/20">
-                <div className="w-10 h-10 bg-secondary/10 rounded-lg flex items-center justify-center mb-4">
-                  <span className="text-xl font-bold text-secondary">2</span>
-                </div>
-                <h4 className="font-bold mb-2">알림 설정하기</h4>
-                <p className="text-sm text-base-content/70">
-                  결제일 알림을 설정하여 구독 갱신 전에 미리 알림을 받으세요.
-                </p>
-              </div>
-              
-              <div className="bg-white/70 dark:bg-base-100/70 backdrop-blur-sm rounded-xl p-6 shadow-sm hover:shadow-md transition-all hover:-translate-y-1 duration-300 border border-white/20 dark:border-base-300/20">
-                <div className="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center mb-4">
-                  <span className="text-xl font-bold text-accent">3</span>
-                </div>
-                <h4 className="font-bold mb-2">리포트 확인하기</h4>
-                <p className="text-sm text-base-content/70">
-                  매월 분석 리포트를 통해 지출 패턴을 파악하고 최적화하세요.
-                </p>
-              </div>
-            </div>
-            
-            <div className="mt-6 flex justify-end">
-              <button className="btn btn-ghost btn-sm gap-2">
-                <HelpCircle className="w-4 h-4" />
-                <span>도움말 센터</span>
-              </button>
-            </div>
-          </div>
+          {/* 다른 탭 내용은 필요에 따라 추가 */}
         </div>
-        
-        {/* 접근성 도구 */}
-        <button 
-          aria-label="접근성 설정"
-          className="fixed bottom-6 right-6 p-3 bg-base-100 rounded-full shadow-lg z-50 hover:bg-primary/10 transition-colors focus:outline-none focus:ring-2 focus:ring-primary"
-        >
-          <Eye className="w-6 h-6 text-primary" />
-        </button>
       </main>
     </div>
-  );
+  )
 } 
