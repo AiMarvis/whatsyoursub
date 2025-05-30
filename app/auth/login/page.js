@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { Mail, MessageCircle, Loader2 } from 'lucide-react'
+import { Mail, MessageCircle, Loader2, AlertCircle, CheckCircle } from 'lucide-react'
 import { signInWithGoogle, signInWithKakao } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 
@@ -10,14 +10,53 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [loadingProvider, setLoadingProvider] = useState(null)
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
   const router = useRouter()
   const searchParams = useSearchParams()
 
-  useEffect(() => {    const errorParam = searchParams.get('error');    const messageParam = searchParams.get('message');        if (errorParam === 'callback_error') {      const errorMessage = messageParam         ? `로그인 오류: ${decodeURIComponent(messageParam)}`        : '로그인 중 오류가 발생했습니다. 다시 시도해주세요.';      setError(errorMessage);    }  }, [searchParams]);
+  useEffect(() => {
+    // URL 파라미터에서 에러 및 성공 상태 확인
+    const errorParam = searchParams.get('error')
+    const messageParam = searchParams.get('message')
+    const successParam = searchParams.get('success')
+    
+    // 에러 처리
+    if (errorParam) {
+      let errorMessage = '로그인 중 오류가 발생했습니다. 다시 시도해주세요.'
+      
+      // 에러 유형에 따른 사용자 친화적 메시지
+      if (errorParam === 'callback_error') {
+        errorMessage = messageParam 
+          ? `로그인 오류: ${decodeURIComponent(messageParam)}`
+          : '인증 처리 중 오류가 발생했습니다. 다시 시도해주세요.'
+      } else if (errorParam === 'session_error') {
+        errorMessage = '세션이 만료되었습니다. 다시 로그인해주세요.'
+      } else if (errorParam === 'provider_error') {
+        errorMessage = '로그인 제공자 연결에 실패했습니다. 다른 방법으로 시도해주세요.'
+      } else if (errorParam === 'network_error') {
+        errorMessage = '네트워크 연결을 확인하고 다시 시도해주세요.'
+      }
+      
+      setError(errorMessage)
+    }
+    
+    // 성공 메시지 처리
+    if (successParam) {
+      setSuccess(decodeURIComponent(messageParam || '로그인 처리가 완료되었습니다.'))
+      
+      // 성공 후 3초 후에 대시보드로 리다이렉트
+      const redirectTimer = setTimeout(() => {
+        router.push('/dashboard')
+      }, 3000)
+      
+      return () => clearTimeout(redirectTimer)
+    }
+  }, [searchParams, router])
 
   const handleSocialLogin = async (provider) => {
     setIsLoading(true)
     setLoadingProvider(provider)
+    setError('') // 이전 에러 메시지 초기화
     
     try {
       if (provider === 'google') {
@@ -26,13 +65,32 @@ export default function LoginPage() {
         await signInWithKakao()
       }
       
-      // 성공 시 대시보드로 리다이렉트
-      // router.push('/dashboard')
+      // 성공 시 자동으로 리다이렉트됨 (Supabase OAuth 흐름)
+      // 따라서 여기서는 별도의 리다이렉트 코드가 필요하지 않음
       
     } catch (error) {
       console.error('로그인 실패:', error)
-      setError(error.message)
-      // 에러 처리
+      
+      // 사용자 친화적인 에러 메시지 생성
+      let errorMessage = '로그인 중 오류가 발생했습니다. 다시 시도해주세요.'
+      
+      if (error.message) {
+        if (error.message.includes('network')) {
+          errorMessage = '네트워크 연결을 확인하고 다시 시도해주세요.'
+        } else if (error.message.includes('popup')) {
+          errorMessage = '팝업이 차단되었습니다. 팝업 차단을 해제하고 다시 시도해주세요.'
+        } else {
+          errorMessage = `로그인 오류: ${error.message}`
+        }
+      }
+      
+      setError(errorMessage)
+      
+      // 에러 발생 시 URL 업데이트
+      const params = new URLSearchParams()
+      params.set('error', 'auth_error')
+      params.set('message', error.message || '알 수 없는 오류')
+      router.replace(`/auth/login?${params.toString()}`)
     } finally {
       setIsLoading(false)
       setLoadingProvider(null)
@@ -57,9 +115,30 @@ export default function LoginPage() {
           <div className="card-body">
             <h2 className="card-title justify-center text-2xl mb-6">로그인</h2>
             
+            {/* 전체 페이지 로딩 표시 */}
+            {isLoading && (
+              <div className="fixed inset-0 bg-black/5 backdrop-blur-sm flex items-center justify-center z-50">
+                <div className="bg-white p-6 rounded-lg shadow-lg flex flex-col items-center">
+                  <Loader2 className="animate-spin w-12 h-12 text-primary mb-4" />
+                  <p className="text-lg font-medium">{loadingProvider === 'google' ? 'Google 계정으로 로그인 중...' : '카카오 계정으로 로그인 중...'}</p>
+                  <p className="text-sm text-gray-500 mt-2">잠시만 기다려주세요...</p>
+                </div>
+              </div>
+            )}
+            
+            {/* 에러 메시지 */}
             {error && (
-              <div className="alert alert-error mb-4">
+              <div className="alert alert-error mb-4 flex items-center gap-2">
+                <AlertCircle className="w-5 h-5" />
                 <span>{error}</span>
+              </div>
+            )}
+            
+            {/* 성공 메시지 */}
+            {success && (
+              <div className="alert alert-success mb-4 flex items-center gap-2">
+                <CheckCircle className="w-5 h-5" />
+                <span>{success}</span>
               </div>
             )}
 
@@ -92,9 +171,7 @@ export default function LoginPage() {
                         d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
                       />
                     </svg>
-                    <span className="ml-2">
-                      {loadingProvider === 'google' ? '로그인 중...' : 'Google 계정으로 계속하기'}
-                    </span>
+                    <span className="ml-2">Google 계정으로 계속하기</span>
                   </>
                 )}
               </button>
@@ -113,9 +190,7 @@ export default function LoginPage() {
                     <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24" fill="currentColor">
                       <path d="M12 3c5.799 0 10.5 3.664 10.5 8.185 0 4.52-4.701 8.184-10.5 8.184a13.5 13.5 0 0 1-1.727-.11l-4.408 2.883c-.501.265-.678.236-.472-.413l.892-3.678c-2.88-1.46-4.785-3.99-4.785-6.866C1.5 6.665 6.201 3 12 3z"/>
                     </svg>
-                    <span className="ml-2">
-                      {loadingProvider === 'kakao' ? '로그인 중...' : '카카오 계정으로 계속하기'}
-                    </span>
+                    <span className="ml-2">카카오 계정으로 계속하기</span>
                   </>
                 )}
               </button>
