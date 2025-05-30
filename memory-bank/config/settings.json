@@ -1,0 +1,35 @@
+{
+  "version": "1.0.0",
+  "name": "memory-bank-config",
+  "description": "메모리 뱅크 설정 파일",
+  "settings": {
+    "storage": {
+      "max_size": "1GB",
+      "backup_interval": "7d",
+      "encryption": "AES-256",
+      "compression": true
+    },
+    "access": {
+      "allow_public": false,
+      "require_auth": true,
+      "session_timeout": "30m"
+    },
+    "notifications": {
+      "enabled": true,
+      "types": ["email", "push", "in-app"],
+      "frequency": "daily"
+    },
+    "sync": {
+      "enabled": true,
+      "interval": "5m",
+      "retry_count": 3,
+      "retry_delay": "1m"
+    }
+  },
+  "features": {
+    "search": true,
+    "tags": true,
+    "versioning": true,
+    "sharing": false
+  }
+} 
