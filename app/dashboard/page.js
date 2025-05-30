@@ -53,7 +53,9 @@ export default function DashboardPage() {
     updateSubscription,
     deleteSubscription,
     totalMonthlyAmount,
-    upcomingPayments
+    upcomingPayments,
+    useLocalBackup,
+    setUseLocalBackup
   } = useSubscriptions(user?.id || '');
 
   // 통계 데이터 (useMemo로 최적화)
@@ -107,6 +109,31 @@ export default function DashboardPage() {
     setDetailModalOpen(true);
   }, []);
 
+  // 로컬 백업 모드 토글
+  const toggleLocalBackupMode = useCallback(() => {
+    const newMode = !useLocalBackup;
+    setUseLocalBackup(newMode);
+    // 모드 변경 후 구독 목록 새로고침
+    setTimeout(() => {
+      refreshSubscriptions();
+    }, 300);
+  }, [useLocalBackup, setUseLocalBackup, refreshSubscriptions]);
+
+  // 상태 메시지 관리
+  const [statusMessage, setStatusMessage] = useState(null);
+
+  // 상태 메시지 표시
+  const showStatusMessage = useCallback((message, type = 'info', duration = 5000) => {
+    setStatusMessage({ message, type });
+    
+    // 자동으로 사라지는 타이머
+    if (duration > 0) {
+      setTimeout(() => {
+        setStatusMessage(null);
+      }, duration);
+    }
+  }, []);
+
   // 구독 폼 제출 처리
   const handleFormSubmit = useCallback(async (data) => {
     try {
@@ -118,21 +145,44 @@ export default function DashboardPage() {
         result = await updateSubscription(selectedSubscription.id, data);
       } else {
         // 새 구독 추가
+        console.log('[폼제출] 구독 추가 시도:', data);
         result = await addSubscription(data);
       }
       
       if (result.success) {
+        console.log('[폼제출] 성공 결과:', result);
         setFormModalOpen(false);
-        refreshSubscriptions();
+        
+        // 상태 알림 표시
+        const actionType = selectedSubscription ? '수정' : '추가';
+        let successMessage = `구독이 성공적으로 ${actionType}되었습니다.`;
+        
+        // 로컬 저장소에 저장된 경우 안내 메시지 추가
+        if (result.isLocal) {
+          successMessage += ' (RLS 정책 문제로 로컬에 저장됨)';
+          // 로컬 백업 모드로 자동 전환
+          setUseLocalBackup(true);
+        }
+        
+        // 성공 메시지 표시
+        showStatusMessage(successMessage, 'success');
+        
+        // 구독 목록 새로고침
+        setTimeout(() => {
+          refreshSubscriptions();
+        }, 500);
       } else {
-        console.error('구독 저장 실패:', result.error);
+        // 오류 처리
+        console.error('[폼제출] 실패:', result.error);
+        showStatusMessage(`구독 저장 실패: ${result.error}`, 'error');
       }
     } catch (error) {
-      console.error('구독 저장 중 오류:', error);
+      console.error('[폼제출] 오류 발생:', error);
+      showStatusMessage(`오류 발생: ${error.message}`, 'error');
     } finally {
       setIsSubmitting(false);
     }
-  }, [selectedSubscription, addSubscription, updateSubscription, refreshSubscriptions]);
+  }, [selectedSubscription, addSubscription, updateSubscription, refreshSubscriptions, showStatusMessage, setUseLocalBackup]);
 
   // 구독 삭제 처리
   const handleDeleteSubscription = useCallback(async (subscription) => {
@@ -214,6 +264,22 @@ export default function DashboardPage() {
             
             {/* 알림 아이콘 */}
             <div className="ml-auto flex items-center gap-4">
+              {/* 로컬 백업 모드 토글 버튼 */}
+              <button 
+                className={`btn btn-sm ${useLocalBackup ? 'btn-warning' : 'btn-outline'} flex items-center gap-1`}
+                onClick={toggleLocalBackupMode}
+                title={useLocalBackup ? '로컬 저장소 모드 활성화됨' : '로컬 저장소 모드 비활성화됨'}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="4" width="20" height="16" rx="2" />
+                  <circle cx="8" cy="10" r="2" />
+                  <path d="M8 16v-2" />
+                  <path d="M16 16v-6" />
+                  <path d="M16 8v0" />
+                </svg>
+                {useLocalBackup ? '로컬 모드' : '동기화 모드'}
+              </button>
+
               <button className="btn btn-circle btn-ghost btn-sm relative group">
                 <Bell className="w-5 h-5 group-hover:text-primary transition-colors" />
                 <span className="absolute top-0 right-0 w-2 h-2 bg-primary rounded-full"></span>
@@ -440,6 +506,34 @@ export default function DashboardPage() {
         onEdit={handleEditSubscription}
         onDelete={handleDeleteSubscription}
       />
+
+      {/* 상태 메시지 표시 */}
+      {statusMessage && (
+        <StatusAlert
+          type={statusMessage.type}
+          message={statusMessage.message}
+          onClose={() => setStatusMessage(null)}
+          className="mt-4"
+        />
+      )}
+
+      {/* 로컬 백업 모드 활성화 시 안내 배너 */}
+      {useLocalBackup && (
+        <div className="alert alert-warning shadow-lg mt-4">
+          <div>
+            <svg xmlns="http://www.w3.org/2000/svg" className="stroke-current flex-shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+            <div>
+              <h3 className="font-bold">로컬 저장소 모드 활성화됨</h3>
+              <div className="text-xs">구독 정보가 브라우저 로컬 스토리지에 저장됩니다. 브라우저 데이터 삭제 시 정보가 사라질 수 있습니다.</div>
+            </div>
+          </div>
+          <div className="flex-none">
+            <button className="btn btn-sm btn-ghost" onClick={toggleLocalBackupMode}>
+              클라우드 모드로 전환
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 } 
