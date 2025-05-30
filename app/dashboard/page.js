@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, lazy, Suspense } from 'react'
+import { useState, useEffect, useMemo, useCallback, Suspense } from 'react'
 import { CreditCard, BarChart3, TrendingUp, Calendar, DollarSign, Package, Bell, Sparkles, AlertTriangle } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
@@ -16,9 +16,23 @@ import EmptyState from '@/components/dashboard/EmptyState'
 import SubscriptionsSkeleton from '@/components/dashboard/SubscriptionsSkeleton'
 import SubscriptionFormModal from '@/components/subscriptions/SubscriptionFormModal'
 import SubscriptionDetailModal from '@/components/subscriptions/SubscriptionDetailModal'
+// 차트 컴포넌트 추가
+import CategoryPieChart from '@/components/dashboard/charts/CategoryPieChart'
+import MonthlyExpenseChart from '@/components/dashboard/charts/MonthlyExpenseChart'
 
 // 대시보드 페이지 컴포넌트
 export default function DashboardPage() {
+  const router = useRouter()
+  
+  // 탭 관리
+  const [activeTab, setActiveTab] = useState('overview');
+  
+  // 모달 상태 관리
+  const [formModalOpen, setFormModalOpen] = useState(false);
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [selectedSubscription, setSelectedSubscription] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  
   // 세션 관리 (커스텀 훅 사용)
   const { 
     user, 
@@ -28,9 +42,6 @@ export default function DashboardPage() {
     signOut,
     toggleSuccessMessage 
   } = useSessionManager();
-  
-  // 탭 관리
-  const [activeTab, setActiveTab] = useState('overview');
   
   // 구독 정보 관리 (커스텀 훅 사용)
   const {
@@ -43,13 +54,7 @@ export default function DashboardPage() {
     deleteSubscription,
     totalMonthlyAmount,
     upcomingPayments
-  } = useSubscriptions(user?.id);
-
-  // 모달 상태 관리
-  const [formModalOpen, setFormModalOpen] = useState(false);
-  const [detailModalOpen, setDetailModalOpen] = useState(false);
-  const [selectedSubscription, setSelectedSubscription] = useState(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  } = useSubscriptions(user?.id || '');
 
   // 통계 데이터 (useMemo로 최적화)
   const stats = useMemo(() => [
@@ -83,29 +88,27 @@ export default function DashboardPage() {
     }
   ], [subscriptions.length, totalMonthlyAmount, upcomingPayments.length]);
 
-  const router = useRouter()
-
   // 구독 추가 모달 열기
-  const handleAddSubscription = () => {
+  const handleAddSubscription = useCallback(() => {
     setSelectedSubscription(null);
     setFormModalOpen(true);
-  };
+  }, []);
 
   // 구독 편집 모달 열기
-  const handleEditSubscription = (subscription) => {
+  const handleEditSubscription = useCallback((subscription) => {
     setSelectedSubscription(subscription);
     setDetailModalOpen(false);
     setFormModalOpen(true);
-  };
+  }, []);
 
   // 구독 상세 정보 모달 열기
-  const handleViewSubscription = (subscription) => {
+  const handleViewSubscription = useCallback((subscription) => {
     setSelectedSubscription(subscription);
     setDetailModalOpen(true);
-  };
+  }, []);
 
   // 구독 폼 제출 처리
-  const handleFormSubmit = async (data) => {
+  const handleFormSubmit = useCallback(async (data) => {
     try {
       setIsSubmitting(true);
       
@@ -123,17 +126,16 @@ export default function DashboardPage() {
         refreshSubscriptions();
       } else {
         console.error('구독 저장 실패:', result.error);
-        // 에러 처리 (필요시 상태 메시지 표시)
       }
     } catch (error) {
       console.error('구독 저장 중 오류:', error);
     } finally {
       setIsSubmitting(false);
     }
-  };
+  }, [selectedSubscription, addSubscription, updateSubscription, refreshSubscriptions]);
 
   // 구독 삭제 처리
-  const handleDeleteSubscription = async (subscription) => {
+  const handleDeleteSubscription = useCallback(async (subscription) => {
     try {
       const result = await deleteSubscription(subscription.id);
       if (result.success) {
@@ -141,12 +143,11 @@ export default function DashboardPage() {
         refreshSubscriptions();
       } else {
         console.error('구독 삭제 실패:', result.error);
-        // 에러 처리 (필요시 상태 메시지 표시)
       }
     } catch (error) {
       console.error('구독 삭제 중 오류:', error);
     }
-  };
+  }, [deleteSubscription, refreshSubscriptions]);
 
   // 로딩 중 상태
   if (authLoading) {
@@ -255,6 +256,21 @@ export default function DashboardPage() {
             />
           ))}
         </div>
+
+        {/* 차트 섹션 - 개요 탭에만 표시 */}
+        {activeTab === 'overview' && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
+            <CategoryPieChart 
+              subscriptions={subscriptions} 
+              loading={subscriptionsLoading} 
+            />
+            <MonthlyExpenseChart 
+              subscriptions={subscriptions} 
+              loading={subscriptionsLoading}
+              totalMonthlyAmount={totalMonthlyAmount}
+            />
+          </div>
+        )}
 
         {/* 탭 콘텐츠 */}
         <div className="mt-8">
