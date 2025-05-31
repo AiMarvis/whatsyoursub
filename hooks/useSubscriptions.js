@@ -123,28 +123,62 @@ export const useSubscriptions = (userId) => {
 
       // 사용자 존재 여부 확인 (외래 키 제약 조건 위반 방지)
       try {
+        // 먼저 세션 상태 확인
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) {
+          console.error('[구독추가] 세션 확인 오류:', sessionError);
+          throw new Error('로그인 세션을 확인할 수 없습니다. 다시 로그인해주세요.');
+        }
+        
+        if (!sessionData.session) {
+          console.warn('[구독추가] 유효한 세션 없음');
+          throw new Error('로그인 세션이 만료되었습니다. 다시 로그인해주세요.');
+        }
+        
+        console.log('[구독추가] 세션 확인 완료:', !!sessionData.session);
+        
+        // 사용자 존재 여부 확인
         const { data: userData, error: userError } = await supabase
           .from('users')
           .select('id')
           .eq('id', userId)
           .single();
           
-        if (userError || !userData) {
-          console.warn('[구독추가] 사용자 확인 실패:', userError || '사용자 없음');
-          throw new Error('사용자 확인에 실패했습니다. 로그인 상태를 확인해주세요.');
+        if (userError) {
+          // 특정 오류 유형에 따른 처리
+          if (userError.code === 'PGRST116') {
+            console.warn('[구독추가] 사용자를 찾을 수 없음:', userError);
+            throw new Error('사용자 정보를 찾을 수 없습니다. 계정 상태를 확인해주세요.');
+          } else {
+            console.error('[구독추가] 사용자 확인 오류:', userError);
+            throw new Error('사용자 정보 확인 중 오류가 발생했습니다.');
+          }
+        }
+        
+        if (!userData) {
+          console.warn('[구독추가] 사용자 데이터 없음');
+          
+          // 사용자 테이블에 기본 정보 자동 삽입 시도
+          try {
+            const { error: insertError } = await supabase
+              .from('users')
+              .insert([{ id: userId, created_at: new Date().toISOString() }]);
+              
+            if (insertError) {
+              console.error('[구독추가] 사용자 자동 생성 실패:', insertError);
+              throw new Error('사용자 정보 생성에 실패했습니다. 관리자에게 문의해주세요.');
+            }
+            
+            console.log('[구독추가] 사용자 자동 생성 성공');
+          } catch (createError) {
+            console.error('[구독추가] 사용자 자동 생성 중 오류:', createError);
+            throw new Error('사용자 정보 생성 중 오류가 발생했습니다. 관리자에게 문의해주세요.');
+          }
         }
       } catch (userCheckError) {
-        console.error('[구독추가] 사용자 확인 중 오류:', userCheckError);
-        throw new Error('사용자 확인 중 오류가 발생했습니다. 로그인 상태를 확인해주세요.');
+        console.error('[구독추가] 사용자 확인 최종 오류:', userCheckError);
+        throw userCheckError;
       }
-
-      // 세션 상태 확인
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) {
-        console.error('[구독추가] 세션 확인 오류:', sessionError);
-        throw new Error('인증 세션 확인 중 오류가 발생했습니다.');
-      }
-      console.log('[구독추가] 세션 확인 완료:', !!sessionData.session);
 
       // 데이터 삽입 시도
       const { data, error: insertError } = await supabase
@@ -344,6 +378,20 @@ export const useSubscriptions = (userId) => {
       if (!userId) return;
       
       try {
+        // 세션 상태 확인
+        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) {
+          console.error('[인증확인] 세션 확인 오류:', sessionError);
+          setError('로그인 세션을 확인할 수 없습니다. 다시 로그인해주세요.');
+          return;
+        }
+        
+        if (!sessionData.session) {
+          console.warn('[인증확인] 유효한 세션 없음');
+          setError('로그인 세션이 만료되었습니다. 다시 로그인해주세요.');
+          return;
+        }
+        
         // 사용자 존재 여부 확인
         const { data, error } = await supabase
           .from('users')
@@ -351,18 +399,47 @@ export const useSubscriptions = (userId) => {
           .eq('id', userId)
           .single();
           
-        if (error || !data) {
-          console.warn('사용자 정보 확인 실패:', error);
-          setError('사용자 인증에 문제가 있습니다. 로그아웃 후 다시 로그인해보세요.');
+        if (error) {
+          console.warn('[인증확인] 사용자 확인 오류:', error);
+          
+          // 사용자 테이블에 기본 정보 자동 삽입 시도
+          if (error.code === 'PGRST116') { // 결과가 없는 경우
+            try {
+              console.log('[인증확인] 사용자 정보 자동 생성 시도');
+              const { error: insertError } = await supabase
+                .from('users')
+                .insert([{ id: userId, created_at: new Date().toISOString() }]);
+                
+              if (insertError) {
+                console.error('[인증확인] 사용자 자동 생성 실패:', insertError);
+                setError('사용자 정보 생성에 실패했습니다. 구독 기능이 제한될 수 있습니다.');
+              } else {
+                console.log('[인증확인] 사용자 자동 생성 성공');
+                // 성공 시 오류 메시지 제거
+                setError(null);
+              }
+            } catch (createError) {
+              console.error('[인증확인] 사용자 자동 생성 중 오류:', createError);
+              setError('사용자 정보 생성 중 오류가 발생했습니다. 구독 기능이 제한될 수 있습니다.');
+            }
+          } else {
+            setError('사용자 정보 확인 중 오류가 발생했습니다. 로그아웃 후 다시 로그인해보세요.');
+          }
+        } else if (!data) {
+          console.warn('[인증확인] 사용자 데이터 없음');
+          setError('사용자 정보를 찾을 수 없습니다. 로그아웃 후 다시 로그인해보세요.');
+        } else {
+          // 성공 시 오류 메시지 제거
+          setError(null);
         }
       } catch (err) {
-        console.error('사용자 인증 확인 오류:', err);
+        console.error('[인증확인] 예상치 못한 오류:', err);
         setError('사용자 인증 상태를 확인하는 중 오류가 발생했습니다.');
       }
     };
     
     checkUserAuth();
-  }, [fetchSubscriptions, userId]);
+  }, [fetchSubscriptions, userId, setError]);
 
   // 총 월별 금액 계산 및 다가오는 결제 필터링
   const calculateTotalMonthlyAmount = useCallback(() => {

@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 // 커스텀 훅
 import { useSessionManager } from '@/hooks/useSessionManager'
 import { useSubscriptions } from '@/hooks/useSubscriptions'
+import { supabase } from '@/lib/supabase'
 
 // 컴포넌트
 import StatCard from '@/components/dashboard/StatCard'
@@ -128,9 +129,17 @@ export default function DashboardPage() {
     try {
       setIsSubmitting(true);
       
+      // 사용자 인증 상태 확인
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !sessionData.session) {
+        showStatusMessage('로그인 세션이 만료되었습니다. 다시 로그인해주세요.', 'error');
+        return;
+      }
+      
       let result;
       if (selectedSubscription) {
         // 기존 구독 수정
+        console.log('[폼제출] 구독 수정 시도:', selectedSubscription.id, data);
         result = await updateSubscription(selectedSubscription.id, data);
       } else {
         // 새 구독 추가
@@ -146,6 +155,10 @@ export default function DashboardPage() {
         const actionType = selectedSubscription ? '수정' : '추가';
         let successMessage = `구독이 성공적으로 ${actionType}되었습니다.`;
         
+        if (result.needsRefresh) {
+          successMessage = result.message || successMessage;
+        }
+        
         // 성공 메시지 표시
         showStatusMessage(successMessage, 'success');
         
@@ -156,15 +169,41 @@ export default function DashboardPage() {
       } else {
         // 오류 처리
         console.error('[폼제출] 실패:', result.error);
-        showStatusMessage(`구독 저장 실패: ${result.error}`, 'error');
+        
+        // 오류 메시지 가공
+        let errorMessage = result.error || '알 수 없는 오류가 발생했습니다.';
+        
+        // 특정 오류 패턴에 대한 사용자 친화적 메시지
+        if (errorMessage.includes('로그인') || errorMessage.includes('인증') || errorMessage.includes('세션')) {
+          errorMessage = '인증 문제가 발생했습니다. 페이지를 새로고침하거나 재로그인해보세요.';
+          
+          // 5초 후 로그인 페이지로 리다이렉트
+          setTimeout(() => {
+            router.push('/auth/login');
+          }, 5000);
+        } else if (errorMessage.includes('외래 키') || errorMessage.includes('제약 조건') || 
+                  errorMessage.includes('foreign key') || errorMessage.includes('constraint')) {
+          errorMessage = '데이터베이스 제약 조건 오류가 발생했습니다. 관리자에게 문의하세요.';
+        }
+        
+        showStatusMessage(`구독 저장 실패: ${errorMessage}`, 'error');
       }
     } catch (error) {
-      console.error('[폼제출] 오류 발생:', error);
-      showStatusMessage(`오류 발생: ${error.message}`, 'error');
+      console.error('[폼제출] 예외 발생:', error);
+      
+      // 사용자 친화적인 오류 메시지
+      let friendlyMessage = '오류가 발생했습니다.';
+      if (error.message.includes('network') || error.message.includes('fetch')) {
+        friendlyMessage = '네트워크 연결을 확인해주세요.';
+      } else if (error.message.includes('timeout')) {
+        friendlyMessage = '요청 시간이 초과되었습니다. 나중에 다시 시도해주세요.';
+      }
+      
+      showStatusMessage(`${friendlyMessage} 상세: ${error.message}`, 'error');
     } finally {
       setIsSubmitting(false);
     }
-  }, [selectedSubscription, addSubscription, updateSubscription, refreshSubscriptions, showStatusMessage]);
+  }, [selectedSubscription, addSubscription, updateSubscription, refreshSubscriptions, showStatusMessage, router, supabase.auth]);
 
   // 구독 삭제 처리
   const handleDeleteSubscription = useCallback(async (subscription) => {
