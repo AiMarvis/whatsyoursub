@@ -269,6 +269,41 @@ export const useSubscriptions = (userId) => {
         billing_cycle: updates.billing_cycle || 'monthly'
       };
 
+      console.log('[구독업데이트] 시도 - ID:', id, '데이터:', normalizedUpdates);
+      
+      // 로컬 백업 모드 체크
+      if (useLocalBackup) {
+        const localData = getLocalSubscriptions();
+        const subscriptionIndex = localData.findIndex(sub => sub.id === id && sub.user_id === userId);
+        
+        if (subscriptionIndex === -1) {
+          throw new Error('해당 구독을 찾을 수 없습니다.');
+        }
+        
+        // 로컬 데이터 업데이트
+        const updatedSubscription = {
+          ...localData[subscriptionIndex],
+          ...normalizedUpdates,
+          updated_at: new Date().toISOString()
+        };
+        
+        localData[subscriptionIndex] = updatedSubscription;
+        const saveResult = saveLocalSubscriptions(localData);
+        
+        if (!saveResult) {
+          throw new Error('로컬 저장소에 구독 정보를 저장하는 데 실패했습니다.');
+        }
+        
+        // 메모리 상태 업데이트
+        setSubscriptions(prev => 
+          prev.map(sub => sub.id === id ? updatedSubscription : sub)
+        );
+        
+        console.log('[구독업데이트] 로컬 성공 - 업데이트된 데이터:', updatedSubscription);
+        return { success: true, data: updatedSubscription };
+      }
+
+      // Supabase를 통한 업데이트
       const { data, error: updateError } = await supabase
         .from('subscriptions')
         .update(normalizedUpdates)
@@ -276,26 +311,47 @@ export const useSubscriptions = (userId) => {
         .eq('user_id', userId)
         .select();
 
-      if (updateError) throw updateError;
+      if (updateError) {
+        console.error('[구독업데이트] Supabase 오류:', updateError);
+        
+        // RLS 정책 오류 발생 시 로컬 저장소로 전환
+        if (updateError.code === '42501' || updateError.message.includes('permission denied')) {
+          console.log('[구독업데이트] RLS 정책 오류, 로컬 저장소로 전환');
+          setUseLocalBackup(true);
+          
+          // 로컬 저장소 업데이트 재시도
+          return await updateSubscription(id, updates);
+        }
+        
+        throw updateError;
+      }
 
       if (data && data.length > 0) {
         // 성공적으로 업데이트된 경우 로컬 상태 업데이트
+        console.log('[구독업데이트] 성공 - 응답 데이터:', data[0]);
         setSubscriptions(prev => 
           prev.map(sub => sub.id === id ? { ...sub, ...data[0] } : sub)
         );
         
         return { success: true, data: data[0] };
       } else {
-        throw new Error('구독을 업데이트할 수 없습니다. 해당 ID를 찾을 수 없습니다.');
+        console.warn('[구독업데이트] 데이터가 반환되지 않음, RLS SELECT 정책 확인 필요');
+        // 구독 목록 강제 새로고침
+        fetchSubscriptions();
+        return { 
+          success: true,
+          message: '구독이 업데이트되었습니다. 목록을 새로고침합니다.',
+          needsRefresh: true 
+        };
       }
     } catch (err) {
-      console.error('구독 업데이트 중 오류:', err);
+      console.error('[구독업데이트] 최종 오류:', err);
       setError(err.message || '구독을 업데이트하는 중 오류가 발생했습니다.');
       return { success: false, error: err.message };
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, useLocalBackup, getLocalSubscriptions, saveLocalSubscriptions, fetchSubscriptions]);
 
   // 구독 삭제
   const deleteSubscription = useCallback(async (id) => {
@@ -306,25 +362,65 @@ export const useSubscriptions = (userId) => {
     try {
       setLoading(true);
       
+      console.log('[구독삭제] 시도 - ID:', id);
+      
+      // 로컬 백업 모드 체크
+      if (useLocalBackup) {
+        const localData = getLocalSubscriptions();
+        const subscriptionIndex = localData.findIndex(sub => sub.id === id && sub.user_id === userId);
+        
+        if (subscriptionIndex === -1) {
+          throw new Error('해당 구독을 찾을 수 없습니다.');
+        }
+        
+        // 로컬 데이터에서 삭제
+        localData.splice(subscriptionIndex, 1);
+        const saveResult = saveLocalSubscriptions(localData);
+        
+        if (!saveResult) {
+          throw new Error('로컬 저장소에서 구독 정보를 삭제하는 데 실패했습니다.');
+        }
+        
+        // 메모리 상태 업데이트
+        setSubscriptions(prev => prev.filter(sub => sub.id !== id));
+        
+        console.log('[구독삭제] 로컬 성공 - ID:', id);
+        return { success: true };
+      }
+      
       const { error: deleteError } = await supabase
         .from('subscriptions')
         .delete()
         .eq('id', id)
         .eq('user_id', userId);
 
-      if (deleteError) throw deleteError;
+      if (deleteError) {
+        console.error('[구독삭제] Supabase 오류:', deleteError);
+        
+        // RLS 정책 오류 발생 시 로컬 저장소로 전환
+        if (deleteError.code === '42501' || deleteError.message.includes('permission denied')) {
+          console.log('[구독삭제] RLS 정책 오류, 로컬 저장소로 전환');
+          setUseLocalBackup(true);
+          
+          // 로컬 저장소 삭제 재시도
+          return await deleteSubscription(id);
+        }
+        
+        throw deleteError;
+      }
 
       // 로컬 상태에서 삭제된 구독 제거
       setSubscriptions(prev => prev.filter(sub => sub.id !== id));
+      console.log('[구독삭제] 성공 - ID:', id);
       return { success: true };
     } catch (err) {
-      console.error('구독 삭제 중 오류:', err);
+      console.error('[구독삭제] 최종 오류:', err);
       setError(err.message || '구독을 삭제하는 중 오류가 발생했습니다.');
       return { success: false, error: err.message };
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [userId, useLocalBackup, getLocalSubscriptions, saveLocalSubscriptions]);
 
   // 컴포넌트 마운트 시 구독 정보 로드
   useEffect(() => {

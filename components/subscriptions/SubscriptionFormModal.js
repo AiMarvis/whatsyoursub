@@ -1,6 +1,6 @@
 'use client'
 
-import React, { memo, useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -16,7 +16,7 @@ const subscriptionSchema = z.object({
   }),
   category: z.enum(['entertainment', 'productivity', 'utility', 'education', 'other'], {
     errorMap: () => ({ message: '카테고리를 선택해주세요' })
-  }),
+  }).default('other'),
   description: z.string().optional(),
   next_payment_date: z.string().refine(val => !val || !isNaN(new Date(val).getTime()), {
     message: '유효한 날짜를 입력해주세요'
@@ -41,7 +41,7 @@ const categoryOptions = [
 ];
 
 // 구독 폼 모달 컴포넌트
-const SubscriptionFormModal = memo(({
+const SubscriptionFormModal = ({
   isOpen,
   onClose,
   onSubmit,
@@ -51,41 +51,70 @@ const SubscriptionFormModal = memo(({
   // 모달이 닫혀있으면 렌더링하지 않음
   if (!isOpen) return null;
 
+  // 로컬 상태 추가
+  const [formData, setFormData] = useState(initialData);
+
   // 폼 상태 관리
   const { 
     register, 
     handleSubmit, 
     reset, 
-    formState: { errors } 
+    formState: { errors, isDirty, isSubmitting } 
   } = useForm({
     resolver: zodResolver(subscriptionSchema),
-    defaultValues: initialData || {
+    defaultValues: {
       name: '',
       price: 0,
       billing_cycle: 'monthly',
       category: 'entertainment',
       description: '',
       next_payment_date: format(new Date(), 'yyyy-MM-dd'),
+      ...initialData
     }
   });
 
   // 초기 데이터가 변경되면 폼 리셋
   useEffect(() => {
     if (isOpen) {
-      reset(initialData || {
+      console.log('폼 리셋 - 초기 데이터:', initialData);
+      reset({
         name: '',
         price: 0,
         billing_cycle: 'monthly',
         category: 'entertainment',
         description: '',
         next_payment_date: format(new Date(), 'yyyy-MM-dd'),
+        ...initialData
       });
+      setFormData(initialData);
     }
   }, [isOpen, initialData, reset]);
 
   // 폼 제출 핸들러
-  const submitHandler = (data) => {
-    onSubmit(data);
+  const submitHandler = async (data) => {
+    try {
+      console.log('폼 제출 - 데이터:', data);
+      
+      // 로딩 상태 확인
+      if (isLoading) {
+        console.log('로딩 중 - 제출 무시');
+        return;
+      }
+      
+      // 폼 데이터 유효성 검증
+      const formattedData = {
+        ...data,
+        price: typeof data.price === 'string' ? parseFloat(data.price) : data.price,
+      };
+      
+      console.log('폼 제출 - 포맷된 데이터:', formattedData);
+      await onSubmit(formattedData);
+      
+      // 성공적으로 제출 후 폼 초기화
+      reset();
+    } catch (error) {
+      console.error('폼 제출 오류:', error);
+    }
   };
 
   return (
@@ -97,7 +126,10 @@ const SubscriptionFormModal = memo(({
           </h3>
           <button 
             className="btn btn-sm btn-ghost btn-circle" 
-            onClick={onClose}
+            onClick={(e) => {
+              e.preventDefault();
+              onClose();
+            }}
             aria-label="닫기"
           >
             <X className="h-5 w-5" />
@@ -229,7 +261,10 @@ const SubscriptionFormModal = memo(({
             <button 
               type="button" 
               className="btn" 
-              onClick={onClose}
+              onClick={(e) => {
+                e.preventDefault();
+                onClose();
+              }}
               disabled={isLoading}
             >
               취소
@@ -257,8 +292,6 @@ const SubscriptionFormModal = memo(({
       <div className="modal-backdrop bg-black/25" onClick={onClose} />
     </dialog>
   );
-});
-
-SubscriptionFormModal.displayName = 'SubscriptionFormModal';
+};
 
 export default SubscriptionFormModal; 
