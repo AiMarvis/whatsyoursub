@@ -1,40 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import { v4 as uuidv4 } from 'uuid';
-
-// 로컬 스토리지 키
-const LOCAL_STORAGE_KEY = 'whatsyoursub_local_subscriptions';
 
 export const useSubscriptions = (userId) => {
   const [subscriptions, setSubscriptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [useLocalBackup, setUseLocalBackup] = useState(false);
-
-  // 로컬 백업에서 구독 데이터 가져오기
-  const getLocalSubscriptions = useCallback(() => {
-    try {
-      const localData = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (localData) {
-        return JSON.parse(localData);
-      }
-      return [];
-    } catch (err) {
-      console.error('로컬 구독 데이터 로딩 오류:', err);
-      return [];
-    }
-  }, []);
-
-  // 로컬 백업에 구독 데이터 저장
-  const saveLocalSubscriptions = useCallback((data) => {
-    try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
-      return true;
-    } catch (err) {
-      console.error('로컬 구독 데이터 저장 오류:', err);
-      return false;
-    }
-  }, []);
 
   // 구독 정보 가져오기
   const fetchSubscriptions = useCallback(async () => {
@@ -52,54 +22,36 @@ export const useSubscriptions = (userId) => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-      let subscriptionsData = [];
-
-      // Supabase에서 구독 정보 가져오기 시도
-      if (!useLocalBackup) {
-        try {
-          let query = supabase
-            .from('subscriptions')
-            .select('*')
-            .eq('user_id', userId);
-          
-          // 정렬 적용 (오류 발생 시 정렬 생략)
-          try {
-            query = query.order('created_at', { ascending: false });
-          } catch (sortError) {
-            console.warn('정렬 적용 중 오류:', sortError);
-          }
-
-          const { data, error: fetchError } = await query;
-
-          clearTimeout(timeoutId);
-
-          if (fetchError) {
-            console.error('Supabase 구독 정보 가져오기 오류:', fetchError);
-            throw fetchError;
-          }
-
-          // 데이터 정규화 및 기본값 설정
-          subscriptionsData = (data || []).map(item => ({
-            ...item,
-            price: item.price || 0,
-            billing_cycle: item.billing_cycle || 'monthly',
-            category: item.category || 'other',
-            next_payment_date: item.next_payment_date || null,
-            description: item.description || ''
-          }));
-        } catch (err) {
-          console.error('Supabase에서 구독 정보 가져오기 실패:', err);
-          // Supabase 실패 시 로컬 백업으로 전환
-          setUseLocalBackup(true);
-          const localData = getLocalSubscriptions();
-          subscriptionsData = localData.filter(sub => sub.user_id === userId);
-        }
-      } else {
-        // 로컬 백업에서 구독 정보 가져오기
-        console.log('로컬 백업에서 구독 정보 가져오기');
-        const localData = getLocalSubscriptions();
-        subscriptionsData = localData.filter(sub => sub.user_id === userId);
+      let query = supabase
+        .from('subscriptions')
+        .select('*')
+        .eq('user_id', userId);
+      
+      // 정렬 적용 (오류 발생 시 정렬 생략)
+      try {
+        query = query.order('created_at', { ascending: false });
+      } catch (sortError) {
+        console.warn('정렬 적용 중 오류:', sortError);
       }
+
+      const { data, error: fetchError } = await query;
+
+      clearTimeout(timeoutId);
+
+      if (fetchError) {
+        console.error('Supabase 구독 정보 가져오기 오류:', fetchError);
+        throw fetchError;
+      }
+
+      // 데이터 정규화 및 기본값 설정
+      const subscriptionsData = (data || []).map(item => ({
+        ...item,
+        price: item.price || 0,
+        billing_cycle: item.billing_cycle || 'monthly',
+        category: item.category || 'other',
+        next_payment_date: item.next_payment_date || null,
+        description: item.description || ''
+      }));
 
       setSubscriptions(subscriptionsData);
     } catch (err) {
@@ -109,7 +61,7 @@ export const useSubscriptions = (userId) => {
     } finally {
       setLoading(false);
     }
-  }, [userId, useLocalBackup, getLocalSubscriptions]);
+  }, [userId]);
 
   // 구독 추가
   const addSubscription = useCallback(async (subscriptionData) => {
@@ -121,11 +73,9 @@ export const useSubscriptions = (userId) => {
     // 유효한 사용자 ID 형식인지 확인
     if (typeof userId !== 'string' || userId.trim() === '') {
       console.error('addSubscription: 유효하지 않은 userId 형식:', userId);
-      // 로컬 백업 모드로 강제 전환
-      setUseLocalBackup(true);
       return { 
         success: false, 
-        error: '유효하지 않은 사용자 ID입니다. 로컬 백업 모드로 전환합니다.' 
+        error: '유효하지 않은 사용자 ID입니다. 로그인 상태를 확인해주세요.' 
       };
     }
 
@@ -181,46 +131,13 @@ export const useSubscriptions = (userId) => {
           
         if (userError || !userData) {
           console.warn('[구독추가] 사용자 확인 실패:', userError || '사용자 없음');
-          console.log('[구독추가] 외래 키 오류 가능성으로 로컬 백업 모드로 전환');
-          setUseLocalBackup(true);
-          throw new Error('사용자 확인에 실패했습니다. 로컬 백업 모드로 전환합니다.');
+          throw new Error('사용자 확인에 실패했습니다. 로그인 상태를 확인해주세요.');
         }
       } catch (userCheckError) {
         console.error('[구독추가] 사용자 확인 중 오류:', userCheckError);
-        setUseLocalBackup(true);
+        throw new Error('사용자 확인 중 오류가 발생했습니다. 로그인 상태를 확인해주세요.');
       }
 
-      // 로컬 백업 모드인 경우 로컬 스토리지에 직접 저장
-      if (useLocalBackup) {
-        // 로컬 고유 ID 생성
-        const localId = `local-${uuidv4()}`;
-        const localSubscription = {
-          ...normalizedData,
-          id: localId,
-          is_local: true, // 로컬 저장소에서 생성된 항목임을 표시
-          created_at: new Date().toISOString(),
-        };
-
-        // 로컬 저장소에 추가
-        const localData = getLocalSubscriptions();
-        const updatedData = [localSubscription, ...localData];
-        const saveResult = saveLocalSubscriptions(updatedData);
-
-        if (saveResult) {
-          // 메모리 상태 업데이트
-          setSubscriptions(prev => [localSubscription, ...prev]);
-          return { 
-            success: true, 
-            data: localSubscription, 
-            isLocal: true,
-            message: '구독이 로컬 저장소에 추가되었습니다.' 
-          };
-        } else {
-          throw new Error('로컬 저장소에 구독 정보를 저장하는 데 실패했습니다.');
-        }
-      }
-
-      // Supabase에 저장 시도
       // 세션 상태 확인
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       if (sessionError) {
@@ -243,68 +160,12 @@ export const useSubscriptions = (userId) => {
         if (insertError.code === '23503' || 
             insertError.message.includes('violates foreign key constraint') ||
             insertError.message.includes('key is not present in table')) {
-          console.log('[구독추가] 외래 키 제약 조건 오류, 로컬 저장소로 전환');
-          setUseLocalBackup(true);
-          
-          // 로컬 고유 ID 생성
-          const localId = `local-${uuidv4()}`;
-          const localSubscription = {
-            ...normalizedData,
-            id: localId,
-            is_local: true, // 로컬 저장소에서 생성된 항목임을 표시
-            created_at: new Date().toISOString(),
-          };
-
-          // 로컬 저장소에 추가
-          const localData = getLocalSubscriptions();
-          const updatedData = [localSubscription, ...localData];
-          const saveResult = saveLocalSubscriptions(updatedData);
-
-          if (saveResult) {
-            // 메모리 상태 업데이트
-            setSubscriptions(prev => [localSubscription, ...prev]);
-            return { 
-              success: true, 
-              data: localSubscription, 
-              isLocal: true,
-              message: '사용자 인증 관련 문제로 로컬에 저장되었습니다.'
-            };
-          } else {
-            throw new Error('로컬 저장소에 구독 정보를 저장하는 데 실패했습니다.');
-          }
+          throw new Error('사용자 인증 문제가 발생했습니다. 로그아웃 후 다시 로그인해보세요.');
         }
         
-        // RLS 정책 오류 발생 시 로컬 저장소로 전환
+        // RLS 정책 오류 발생 시
         if (insertError.code === '42501' || insertError.message.includes('permission denied')) {
-          console.log('[구독추가] RLS 정책 오류, 로컬 저장소로 전환');
-          setUseLocalBackup(true);
-          
-          // 로컬 고유 ID 생성
-          const localId = `local-${uuidv4()}`;
-          const localSubscription = {
-            ...normalizedData,
-            id: localId,
-            is_local: true, // 로컬 저장소에서 생성된 항목임을 표시
-            created_at: new Date().toISOString(),
-          };
-
-          // 로컬 저장소에 추가
-          const localData = getLocalSubscriptions();
-          const updatedData = [localSubscription, ...localData];
-          const saveResult = saveLocalSubscriptions(updatedData);
-
-          if (saveResult) {
-            // 메모리 상태 업데이트
-            setSubscriptions(prev => [localSubscription, ...prev]);
-            return { 
-              success: true, 
-              data: localSubscription, 
-              isLocal: true,
-              message: 'Supabase 저장 실패로 로컬에 저장되었습니다.'
-            };
-          } else {
-            throw new Error('로컬 저장소에 구독 정보를 저장하는 데 실패했습니다.');
-          }
+          throw new Error('데이터베이스 접근 권한이 없습니다. 관리자에게 문의하세요.');
         }
         
         if (insertError.code === '23505' || insertError.message.includes('duplicate key')) {
@@ -344,7 +205,7 @@ export const useSubscriptions = (userId) => {
     } finally {
       setLoading(false);
     }
-  }, [userId, fetchSubscriptions, useLocalBackup, getLocalSubscriptions, saveLocalSubscriptions]);
+  }, [userId, fetchSubscriptions]);
 
   // 구독 업데이트
   const updateSubscription = useCallback(async (id, updates) => {
@@ -387,38 +248,6 @@ export const useSubscriptions = (userId) => {
 
       console.log('[구독업데이트] 시도 - ID:', id, '데이터:', normalizedUpdates);
       
-      // 로컬 백업 모드 체크
-      if (useLocalBackup) {
-        const localData = getLocalSubscriptions();
-        const subscriptionIndex = localData.findIndex(sub => sub.id === id && sub.user_id === userId);
-        
-        if (subscriptionIndex === -1) {
-          throw new Error('해당 구독을 찾을 수 없습니다.');
-        }
-        
-        // 로컬 데이터 업데이트
-        const updatedSubscription = {
-          ...localData[subscriptionIndex],
-          ...normalizedUpdates,
-          updated_at: new Date().toISOString()
-        };
-        
-        localData[subscriptionIndex] = updatedSubscription;
-        const saveResult = saveLocalSubscriptions(localData);
-        
-        if (!saveResult) {
-          throw new Error('로컬 저장소에 구독 정보를 저장하는 데 실패했습니다.');
-        }
-        
-        // 메모리 상태 업데이트
-        setSubscriptions(prev => 
-          prev.map(sub => sub.id === id ? updatedSubscription : sub)
-        );
-        
-        console.log('[구독업데이트] 로컬 성공 - 업데이트된 데이터:', updatedSubscription);
-        return { success: true, data: updatedSubscription };
-      }
-
       // Supabase를 통한 업데이트
       const { data, error: updateError } = await supabase
         .from('subscriptions')
@@ -430,13 +259,9 @@ export const useSubscriptions = (userId) => {
       if (updateError) {
         console.error('[구독업데이트] Supabase 오류:', updateError);
         
-        // RLS 정책 오류 발생 시 로컬 저장소로 전환
+        // RLS 정책 오류 발생 시
         if (updateError.code === '42501' || updateError.message.includes('permission denied')) {
-          console.log('[구독업데이트] RLS 정책 오류, 로컬 저장소로 전환');
-          setUseLocalBackup(true);
-          
-          // 로컬 저장소 업데이트 재시도
-          return await updateSubscription(id, updates);
+          throw new Error('데이터베이스 접근 권한이 없습니다. 관리자에게 문의하세요.');
         }
         
         throw updateError;
@@ -467,7 +292,7 @@ export const useSubscriptions = (userId) => {
     } finally {
       setLoading(false);
     }
-  }, [userId, useLocalBackup, getLocalSubscriptions, saveLocalSubscriptions, fetchSubscriptions]);
+  }, [userId, fetchSubscriptions]);
 
   // 구독 삭제
   const deleteSubscription = useCallback(async (id) => {
@@ -480,30 +305,6 @@ export const useSubscriptions = (userId) => {
       
       console.log('[구독삭제] 시도 - ID:', id);
       
-      // 로컬 백업 모드 체크
-      if (useLocalBackup) {
-        const localData = getLocalSubscriptions();
-        const subscriptionIndex = localData.findIndex(sub => sub.id === id && sub.user_id === userId);
-        
-        if (subscriptionIndex === -1) {
-          throw new Error('해당 구독을 찾을 수 없습니다.');
-        }
-        
-        // 로컬 데이터에서 삭제
-        localData.splice(subscriptionIndex, 1);
-        const saveResult = saveLocalSubscriptions(localData);
-        
-        if (!saveResult) {
-          throw new Error('로컬 저장소에서 구독 정보를 삭제하는 데 실패했습니다.');
-        }
-        
-        // 메모리 상태 업데이트
-        setSubscriptions(prev => prev.filter(sub => sub.id !== id));
-        
-        console.log('[구독삭제] 로컬 성공 - ID:', id);
-        return { success: true };
-      }
-      
       const { error: deleteError } = await supabase
         .from('subscriptions')
         .delete()
@@ -513,13 +314,9 @@ export const useSubscriptions = (userId) => {
       if (deleteError) {
         console.error('[구독삭제] Supabase 오류:', deleteError);
         
-        // RLS 정책 오류 발생 시 로컬 저장소로 전환
+        // RLS 정책 오류 발생 시
         if (deleteError.code === '42501' || deleteError.message.includes('permission denied')) {
-          console.log('[구독삭제] RLS 정책 오류, 로컬 저장소로 전환');
-          setUseLocalBackup(true);
-          
-          // 로컬 저장소 삭제 재시도
-          return await deleteSubscription(id);
+          throw new Error('데이터베이스 접근 권한이 없습니다. 관리자에게 문의하세요.');
         }
         
         throw deleteError;
@@ -536,7 +333,7 @@ export const useSubscriptions = (userId) => {
     } finally {
       setLoading(false);
     }
-  }, [userId, useLocalBackup, getLocalSubscriptions, saveLocalSubscriptions]);
+  }, [userId]);
 
   // 컴포넌트 마운트 시 구독 정보 로드
   useEffect(() => {
@@ -555,17 +352,17 @@ export const useSubscriptions = (userId) => {
           .single();
           
         if (error || !data) {
-          console.warn('사용자 정보 확인 실패. 로컬 백업 모드로 전환합니다.', error);
-          setUseLocalBackup(true);
+          console.warn('사용자 정보 확인 실패:', error);
+          setError('사용자 인증에 문제가 있습니다. 로그아웃 후 다시 로그인해보세요.');
         }
       } catch (err) {
         console.error('사용자 인증 확인 오류:', err);
-        setUseLocalBackup(true);
+        setError('사용자 인증 상태를 확인하는 중 오류가 발생했습니다.');
       }
     };
     
     checkUserAuth();
-  }, [fetchSubscriptions, userId, supabase]);
+  }, [fetchSubscriptions, userId]);
 
   // 총 월별 금액 계산 및 다가오는 결제 필터링
   const calculateTotalMonthlyAmount = useCallback(() => {
@@ -604,9 +401,7 @@ export const useSubscriptions = (userId) => {
     deleteSubscription,
     totalMonthlyAmount: calculateTotalMonthlyAmount(),
     upcomingPayments: filterUpcomingPayments(),
-    setError, // 외부에서 에러 상태를 직접 제어할 필요가 있다면 추가
-    useLocalBackup, // 로컬 백업 사용 여부
-    setUseLocalBackup // 로컬 백업 모드 전환 함수
+    setError
   };
 };
 
