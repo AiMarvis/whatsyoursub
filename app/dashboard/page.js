@@ -113,11 +113,19 @@ export default function DashboardPage() {
   const toggleLocalBackupMode = useCallback(() => {
     const newMode = !useLocalBackup;
     setUseLocalBackup(newMode);
+    
+    // 모드 변경 알림 표시
+    if (newMode) {
+      showStatusMessage('로컬 백업 모드가 활성화되었습니다. 구독 정보가 브라우저에 저장됩니다.', 'info');
+    } else {
+      showStatusMessage('로컬 백업 모드가 비활성화되었습니다. 구독 정보가 Supabase에 저장됩니다.', 'info');
+    }
+    
     // 모드 변경 후 구독 목록 새로고침
     setTimeout(() => {
       refreshSubscriptions();
     }, 300);
-  }, [useLocalBackup, setUseLocalBackup, refreshSubscriptions]);
+  }, [useLocalBackup, setUseLocalBackup, refreshSubscriptions, showStatusMessage]);
 
   // 상태 메시지 관리
   const [statusMessage, setStatusMessage] = useState(null);
@@ -198,6 +206,13 @@ export default function DashboardPage() {
       console.error('구독 삭제 중 오류:', error);
     }
   }, [deleteSubscription, refreshSubscriptions]);
+
+  // 컴포넌트 마운트 시 useLocalBackup 상태에 따라 알림 표시
+  useEffect(() => {
+    if (useLocalBackup && !authLoading && user) {
+      showStatusMessage('로컬 백업 모드가 활성화되어 있습니다. 구독 정보가 브라우저에 저장됩니다.', 'warning', 10000);
+    }
+  }, [useLocalBackup, authLoading, user, showStatusMessage]);
 
   // 로딩 중 상태
   if (authLoading) {

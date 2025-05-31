@@ -118,6 +118,17 @@ export const useSubscriptions = (userId) => {
       return { success: false, error: '인증된 사용자만 구독을 추가할 수 있습니다. 로그인을 확인해주세요.' };
     }
 
+    // 유효한 사용자 ID 형식인지 확인
+    if (typeof userId !== 'string' || userId.trim() === '') {
+      console.error('addSubscription: 유효하지 않은 userId 형식:', userId);
+      // 로컬 백업 모드로 강제 전환
+      setUseLocalBackup(true);
+      return { 
+        success: false, 
+        error: '유효하지 않은 사용자 ID입니다. 로컬 백업 모드로 전환합니다.' 
+      };
+    }
+
     setLoading(true);
     setError(null); // 에러 상태 초기화
 
@@ -160,6 +171,25 @@ export const useSubscriptions = (userId) => {
       console.log('[구독추가] 시도 - 사용자 ID:', userId);
       console.log('[구독추가] 정규화된 데이터:', JSON.stringify(normalizedData, null, 2));
 
+      // 사용자 존재 여부 확인 (외래 키 제약 조건 위반 방지)
+      try {
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('id')
+          .eq('id', userId)
+          .single();
+          
+        if (userError || !userData) {
+          console.warn('[구독추가] 사용자 확인 실패:', userError || '사용자 없음');
+          console.log('[구독추가] 외래 키 오류 가능성으로 로컬 백업 모드로 전환');
+          setUseLocalBackup(true);
+          throw new Error('사용자 확인에 실패했습니다. 로컬 백업 모드로 전환합니다.');
+        }
+      } catch (userCheckError) {
+        console.error('[구독추가] 사용자 확인 중 오류:', userCheckError);
+        setUseLocalBackup(true);
+      }
+
       // 로컬 백업 모드인 경우 로컬 스토리지에 직접 저장
       if (useLocalBackup) {
         // 로컬 고유 ID 생성
@@ -179,7 +209,12 @@ export const useSubscriptions = (userId) => {
         if (saveResult) {
           // 메모리 상태 업데이트
           setSubscriptions(prev => [localSubscription, ...prev]);
-          return { success: true, data: localSubscription, isLocal: true };
+          return { 
+            success: true, 
+            data: localSubscription, 
+            isLocal: true,
+            message: '구독이 로컬 저장소에 추가되었습니다.' 
+          };
         } else {
           throw new Error('로컬 저장소에 구독 정보를 저장하는 데 실패했습니다.');
         }
@@ -203,6 +238,41 @@ export const useSubscriptions = (userId) => {
       if (insertError) {
         console.error('[구독추가] Supabase 오류:', insertError);
         console.error('[구독추가] 오류 상세:', JSON.stringify(insertError, null, 2));
+        
+        // 외래 키 제약 조건 오류 처리
+        if (insertError.code === '23503' || 
+            insertError.message.includes('violates foreign key constraint') ||
+            insertError.message.includes('key is not present in table')) {
+          console.log('[구독추가] 외래 키 제약 조건 오류, 로컬 저장소로 전환');
+          setUseLocalBackup(true);
+          
+          // 로컬 고유 ID 생성
+          const localId = `local-${uuidv4()}`;
+          const localSubscription = {
+            ...normalizedData,
+            id: localId,
+            is_local: true, // 로컬 저장소에서 생성된 항목임을 표시
+            created_at: new Date().toISOString(),
+          };
+
+          // 로컬 저장소에 추가
+          const localData = getLocalSubscriptions();
+          const updatedData = [localSubscription, ...localData];
+          const saveResult = saveLocalSubscriptions(updatedData);
+
+          if (saveResult) {
+            // 메모리 상태 업데이트
+            setSubscriptions(prev => [localSubscription, ...prev]);
+            return { 
+              success: true, 
+              data: localSubscription, 
+              isLocal: true,
+              message: '사용자 인증 관련 문제로 로컬에 저장되었습니다.'
+            };
+          } else {
+            throw new Error('로컬 저장소에 구독 정보를 저장하는 데 실패했습니다.');
+          }
+        }
         
         // RLS 정책 오류 발생 시 로컬 저장소로 전환
         if (insertError.code === '42501' || insertError.message.includes('permission denied')) {
@@ -471,7 +541,31 @@ export const useSubscriptions = (userId) => {
   // 컴포넌트 마운트 시 구독 정보 로드
   useEffect(() => {
     fetchSubscriptions();
-  }, [fetchSubscriptions]);
+    
+    // 페이지 로드 시 사용자 인증 상태 확인
+    const checkUserAuth = async () => {
+      if (!userId) return;
+      
+      try {
+        // 사용자 존재 여부 확인
+        const { data, error } = await supabase
+          .from('users')
+          .select('id')
+          .eq('id', userId)
+          .single();
+          
+        if (error || !data) {
+          console.warn('사용자 정보 확인 실패. 로컬 백업 모드로 전환합니다.', error);
+          setUseLocalBackup(true);
+        }
+      } catch (err) {
+        console.error('사용자 인증 확인 오류:', err);
+        setUseLocalBackup(true);
+      }
+    };
+    
+    checkUserAuth();
+  }, [fetchSubscriptions, userId, supabase]);
 
   // 총 월별 금액 계산 및 다가오는 결제 필터링
   const calculateTotalMonthlyAmount = useCallback(() => {
