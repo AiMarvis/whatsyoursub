@@ -21,6 +21,7 @@ const subscriptionSchema = z.object({
   next_payment_date: z.string().refine(val => !val || !isNaN(new Date(val).getTime()), {
     message: '유효한 날짜를 입력해주세요'
   }),
+  monthly_cost: z.number().optional(),
 });
 
 // 결제 주기 옵션
@@ -40,6 +41,19 @@ const categoryOptions = [
   { value: 'other', label: '기타' },
 ];
 
+// 결제 주기에 따른 월별 가격 계산 함수
+const calculateMonthlyPrice = (price, billingCycle) => {
+  const numPrice = parseFloat(price) || 0;
+  
+  switch (billingCycle) {
+    case 'yearly': return numPrice / 12;
+    case 'quarterly': return numPrice / 3;
+    case 'weekly': return numPrice * 4.33; // 평균 4.33주/월
+    case 'monthly':
+    default: return numPrice;
+  }
+};
+
 // 구독 폼 모달 컴포넌트
 const SubscriptionFormModal = ({
   isOpen,
@@ -48,11 +62,39 @@ const SubscriptionFormModal = ({
   initialData = null,
   isLoading = false,
 }) => {
-  // 모달이 닫혀있으면 렌더링하지 않음
-  if (!isOpen) return null;
-
   // 로컬 상태 추가
   const [formData, setFormData] = useState(initialData);
+
+  // 기본값 계산
+  const getDefaultValues = () => {
+    const now = new Date();
+    const defaults = {
+      name: '',
+      price: 0,
+      billing_cycle: 'monthly',
+      category: 'entertainment',
+      description: '',
+      next_payment_date: format(now, 'yyyy-MM-dd'),
+      monthly_cost: 0,
+    };
+    
+    if (initialData) {
+      // initialData가 있으면 해당 값으로 덮어쓰기
+      const combined = {
+        ...defaults,
+        ...initialData,
+      };
+      
+      // monthly_cost 필드 확인 및 계산
+      if (!combined.monthly_cost) {
+        combined.monthly_cost = calculateMonthlyPrice(combined.price, combined.billing_cycle);
+      }
+      
+      return combined;
+    }
+    
+    return defaults;
+  };
 
   // 폼 상태 관리
   const { 
@@ -62,30 +104,14 @@ const SubscriptionFormModal = ({
     formState: { errors, isDirty, isSubmitting } 
   } = useForm({
     resolver: zodResolver(subscriptionSchema),
-    defaultValues: {
-      name: '',
-      price: 0,
-      billing_cycle: 'monthly',
-      category: 'entertainment',
-      description: '',
-      next_payment_date: format(new Date(), 'yyyy-MM-dd'),
-      ...initialData
-    }
+    defaultValues: getDefaultValues()
   });
 
   // 초기 데이터가 변경되면 폼 리셋
   useEffect(() => {
     if (isOpen) {
-      console.log('폼 리셋 - 초기 데이터:', initialData);
-      reset({
-        name: '',
-        price: 0,
-        billing_cycle: 'monthly',
-        category: 'entertainment',
-        description: '',
-        next_payment_date: format(new Date(), 'yyyy-MM-dd'),
-        ...initialData
-      });
+      console.log('폼 리셋 - 초기값:', getDefaultValues());
+      reset(getDefaultValues());
       setFormData(initialData);
     }
   }, [isOpen, initialData, reset]);
@@ -105,6 +131,7 @@ const SubscriptionFormModal = ({
       const formattedData = {
         ...data,
         price: typeof data.price === 'string' ? parseFloat(data.price) : data.price,
+        monthly_cost: calculateMonthlyPrice(data.price, data.billing_cycle),
       };
       
       console.log('폼 제출 - 포맷된 데이터:', formattedData);
@@ -116,6 +143,9 @@ const SubscriptionFormModal = ({
       console.error('폼 제출 오류:', error);
     }
   };
+
+  // 모달이 닫혀있으면 렌더링하지 않음
+  if (!isOpen) return null;
 
   return (
     <dialog className="modal modal-open">
@@ -294,4 +324,4 @@ const SubscriptionFormModal = ({
   );
 };
 
-export default SubscriptionFormModal; 
+export default SubscriptionFormModal;

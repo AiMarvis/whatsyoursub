@@ -133,6 +133,29 @@ export const useSubscriptions = (userId) => {
         start_date: subscriptionData.start_date || new Date().toISOString().split('T')[0],
         created_at: new Date().toISOString(), // 생성 시간 명시적 설정
       };
+
+      // monthly_cost 필드 계산 및 추가
+      if (subscriptionData.monthly_cost !== undefined) {
+        normalizedData.monthly_cost = parseFloat(subscriptionData.monthly_cost) || 0;
+      } else {
+        // 결제 주기에 따라 월별 비용 계산
+        const price = parseFloat(normalizedData.price) || 0;
+        switch (normalizedData.billing_cycle) {
+          case 'yearly':
+            normalizedData.monthly_cost = price / 12;
+            break;
+          case 'quarterly':
+            normalizedData.monthly_cost = price / 3;
+            break;
+          case 'weekly':
+            normalizedData.monthly_cost = price * 4.33; // 평균 4.33주/월
+            break;
+          case 'monthly':
+          default:
+            normalizedData.monthly_cost = price;
+            break;
+        }
+      }
       
       console.log('[구독추가] 시도 - 사용자 ID:', userId);
       console.log('[구독추가] 정규화된 데이터:', JSON.stringify(normalizedData, null, 2));
@@ -268,6 +291,29 @@ export const useSubscriptions = (userId) => {
         category: updates.category || 'other',
         billing_cycle: updates.billing_cycle || 'monthly'
       };
+
+      // monthly_cost 필드 계산 및 추가
+      if (updates.monthly_cost !== undefined) {
+        normalizedUpdates.monthly_cost = parseFloat(updates.monthly_cost) || 0;
+      } else {
+        // 결제 주기에 따라 월별 비용 계산
+        const price = parseFloat(updates.price) || 0;
+        switch (normalizedUpdates.billing_cycle) {
+          case 'yearly':
+            normalizedUpdates.monthly_cost = price / 12;
+            break;
+          case 'quarterly':
+            normalizedUpdates.monthly_cost = price / 3;
+            break;
+          case 'weekly':
+            normalizedUpdates.monthly_cost = price * 4.33; // 평균 4.33주/월
+            break;
+          case 'monthly':
+          default:
+            normalizedUpdates.monthly_cost = price;
+            break;
+        }
+      }
 
       console.log('[구독업데이트] 시도 - ID:', id, '데이터:', normalizedUpdates);
       
