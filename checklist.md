@@ -1,7 +1,7 @@
 # What's Your Sub - 프로젝트 체크리스트
 
 ## 진행 상황 요약
-- 전체 진행률: 5% (1/20 항목 완료)
+- 전체 진행률: 36% (8/22 항목 완료)
 - 마지막 업데이트: 2024-10-28
 
 ## 소개
@@ -11,23 +11,44 @@
 
 ### 1. 프로젝트 설정 및 환경
 - [x] Next.js 프로젝트 초기 설정 완료
-- [ ] 개발 환경 구성 (Node.js, npm/yarn)
-- [ ] 필수 의존성 설치 및 확인
-  - [ ] Supabase 관련 패키지 (@supabase/auth-helpers-nextjs, @supabase/ssr, @supabase/supabase-js)
-  - [ ] 차트 관련 패키지 (chart.js, react-chartjs-2)
-  - [ ] 폼 관련 패키지 (@hookform/resolvers, react-hook-form, zod)
-  - [ ] UI 관련 패키지 (lucide-react, daisyui)
-- [ ] 환경 변수 설정
-  - [ ] Supabase URL 및 Anon Key 설정
-  - [ ] OAuth 관련 환경 변수 설정 (Google, Kakao 등)
-- [ ] 프로젝트 구조 및 경로 설정 (jsconfig.json)
-- [ ] TailwindCSS 설정 및 커스텀 테마 구성
-- [ ] ESLint 및 코드 품질 도구 설정
+- [x] 개발 환경 구성 (Node.js v22.14.0, npm v10.9.2)
+- [x] 필수 의존성 설치 및 확인
+  - [x] Supabase 관련 패키지 (@supabase/auth-helpers-nextjs, @supabase/ssr, @supabase/supabase-js)
+  - [x] 차트 관련 패키지 (chart.js, react-chartjs-2)
+  - [x] 폼 관련 패키지 (@hookform/resolvers, react-hook-form, zod)
+  - [x] UI 관련 패키지 (lucide-react, daisyui)
+- [x] 환경 변수 설정
+  - [x] Supabase URL 및 Anon Key 설정
+  - [ ] OAuth 관련 환경 변수 설정 (Google, Kakao 등) - 주석 처리됨
+- [x] 프로젝트 구조 및 경로 설정 (jsconfig.json)
+- [x] TailwindCSS 설정 및 커스텀 테마 구성
+- [x] ESLint 및 코드 품질 도구 설정
+- [ ] 추가 테마 및 다크 모드 설정 완료
 
 ### 2. 핵심 기능
-- [ ] 항목 1
-- [ ] 항목 2
-- [ ] 항목 3
+- [ ] 인증 시스템
+  - [ ] 로그인 페이지 구현
+  - [ ] 콜백 처리 구현
+  - [ ] 세션 관리 구현
+  - [ ] 소셜 로그인 통합 (Google, Kakao 등)
+- [ ] 대시보드 기능
+  - [ ] 구독 요약 페이지
+  - [ ] 월별 지출 차트 구현
+  - [ ] 카테고리별 지출 차트 구현
+  - [ ] 상태 알림 기능
+- [ ] 구독 관리
+  - [ ] 구독 추가 모달 구현
+  - [ ] 구독 상세 정보 모달 구현
+  - [ ] 구독 수정 기능
+  - [ ] 구독 삭제 기능
+- [ ] 프로필 관리
+  - [ ] 사용자 정보 표시
+  - [ ] 사용자 정보 수정
+  - [ ] 알림 설정
+- [ ] 데이터 저장 및 관리
+  - [ ] Supabase 연동
+  - [ ] 메모리 뱅크 서비스 구현
+  - [ ] 데이터 캐싱 및 최적화
 
 ### 3. 테스트 및 최적화
 - [ ] 항목 1
