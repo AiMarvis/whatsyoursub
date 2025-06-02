@@ -162,10 +162,8 @@ export default function DashboardPage() {
         // 성공 메시지 표시
         showStatusMessage(successMessage, 'success');
         
-        // 구독 목록 새로고침
-        setTimeout(() => {
-          refreshSubscriptions();
-        }, 500);
+        // 구독 목록 즉시 새로고침 (setTimeout 제거)
+        refreshSubscriptions();
       } else {
         // 오류 처리
         console.error('[폼제출] 실패:', result.error);
@@ -191,15 +189,35 @@ export default function DashboardPage() {
     } catch (error) {
       console.error('[폼제출] 예외 발생:', error);
       
-      // 사용자 친화적인 오류 메시지
+      // 상세 에러 로깅 추가
+      console.error('[폼제출] 에러 상세:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
+        originalError: error.originalError
+      });
+      
+      // 사용자 친화적인 오류 메시지 확장
       let friendlyMessage = '오류가 발생했습니다.';
-      if (error.message.includes('network') || error.message.includes('fetch')) {
+      let errorType = 'error';
+      
+      if (error.message.includes('network') || error.message.includes('fetch') || error.message.includes('connection')) {
         friendlyMessage = '네트워크 연결을 확인해주세요.';
       } else if (error.message.includes('timeout')) {
         friendlyMessage = '요청 시간이 초과되었습니다. 나중에 다시 시도해주세요.';
+      } else if (error.message.includes('auth') || error.message.includes('session') || error.message.includes('login')) {
+        friendlyMessage = '인증 문제가 발생했습니다. 페이지를 새로고침하거나 재로그인해보세요.';
+        errorType = 'warning';
+        
+        // 세션 관련 오류는 5초 후 로그인 페이지로 리다이렉트
+        setTimeout(() => {
+          router.push('/auth/login');
+        }, 5000);
+      } else if (error.message.includes('database') || error.message.includes('query') || error.message.includes('supabase')) {
+        friendlyMessage = '데이터베이스 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
       }
       
-      showStatusMessage(`${friendlyMessage} 상세: ${error.message}`, 'error');
+      showStatusMessage(`${friendlyMessage} (${error.message})`, errorType);
     } finally {
       setIsSubmitting(false);
     }
@@ -226,7 +244,16 @@ export default function DashboardPage() {
     if (!authLoading && user && showSuccessMessage) {
       showStatusMessage('로그인에 성공했습니다! 이제 모든 기능을 사용할 수 있습니다.', 'success', 5000);
     }
-  }, [authLoading, user, showSuccessMessage, showStatusMessage]);
+    
+    // 세션 오류 발생 시 자동 리다이렉트
+    if (sessionError && sessionError.includes('만료')) {
+      const redirectTimer = setTimeout(() => {
+        router.push('/auth/login');
+      }, 5000);
+      
+      return () => clearTimeout(redirectTimer);
+    }
+  }, [authLoading, user, showSuccessMessage, showStatusMessage, sessionError, router]);
 
   // 로딩 중 상태
   if (authLoading) {
@@ -251,10 +278,48 @@ export default function DashboardPage() {
           <div className="card-body">
             <h2 className="card-title justify-center text-error">인증 오류</h2>
             <p className="text-center">{sessionError || '인증 세션을 찾을 수 없습니다. 다시 로그인해주세요.'}</p>
-            <div className="card-actions justify-center mt-4">
-              <button className="btn btn-primary" onClick={() => router.push('/auth/login')}>
+            
+            {/* 구독 관련 오류 표시 */}
+            {subscriptionsError && (
+              <div className="alert alert-warning mt-4">
+                <AlertTriangle className="w-5 h-5" />
+                <span>{subscriptionsError}</span>
+              </div>
+            )}
+            
+            {/* 세션 만료 시 자동 리다이렉트 안내 */}
+            {sessionError && sessionError.includes('만료') && (
+              <div className="mt-2 text-sm text-center text-base-content/70">
+                <p>5초 후 로그인 페이지로 자동 이동합니다.</p>
+                <div className="mt-1 w-full bg-base-200 rounded-full h-1.5">
+                  <div className="bg-primary h-1.5 rounded-full animate-[shrink_5s_linear_forwards]"></div>
+                </div>
+              </div>
+            )}
+            
+            <div className="card-actions justify-center mt-4 gap-2">
+              <button 
+                className="btn btn-primary" 
+                onClick={() => router.push('/auth/login')}
+              >
                 로그인 페이지로 이동
               </button>
+              <button 
+                className="btn btn-outline" 
+                onClick={() => window.location.reload()}
+              >
+                새로고침
+              </button>
+            </div>
+            
+            {/* 추가 도움말 */}
+            <div className="mt-4 text-sm text-center text-base-content/70">
+              <p>문제가 계속되면 다음 방법을 시도해보세요:</p>
+              <ul className="list-disc list-inside text-left mt-1">
+                <li>브라우저 쿠키 및 캐시 삭제</li>
+                <li>시크릿 모드에서 접속</li>
+                <li>다른 브라우저 사용</li>
+              </ul>
             </div>
           </div>
         </div>
@@ -271,6 +336,23 @@ export default function DashboardPage() {
           message={sessionError}
           description="5초 후 로그인 페이지로 이동합니다."
           className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 w-auto max-w-3xl"
+          onClose={() => {}} // 닫기 버튼 비활성화
+          actions={
+            <div className="flex gap-2 mt-2">
+              <button 
+                className="btn btn-sm btn-primary" 
+                onClick={() => router.push('/auth/login')}
+              >
+                지금 로그인하기
+              </button>
+              <button 
+                className="btn btn-sm btn-ghost" 
+                onClick={() => window.location.reload()}
+              >
+                페이지 새로고침
+              </button>
+            </div>
+          }
         />
       )}
       
