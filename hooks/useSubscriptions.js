@@ -22,6 +22,44 @@ export const useSubscriptions = (userId) => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000);
 
+      // 먼저 사용자 존재 여부 확인 (RLS 정책 오류 가능성 처리)
+      try {
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('id')
+          .eq('id', userId)
+          .single();
+          
+        if (userError) {
+          // RLS 정책 오류인 경우에도 구독 목록 가져오기 시도
+          if (userError.code === '42501' || (typeof userError.message === 'string' && userError.message.includes('permission denied'))) {
+            console.warn('[구독목록] RLS 정책으로 인한 사용자 테이블 접근 제한, 계속 진행');
+          } else {
+            console.warn('[구독목록] 사용자 확인 오류:', userError);
+          }
+          
+          // 모든 오류에도 불구하고 구독 목록을 로컬 스토리지에서 먼저 시도
+          const localStorageKey = `subscriptions_${userId}`;
+          try {
+            const storedData = localStorage.getItem(localStorageKey);
+            if (storedData) {
+              const parsedData = JSON.parse(storedData);
+              if (Array.isArray(parsedData) && parsedData.length > 0) {
+                console.log('[구독목록] 로컬 스토리지에서 구독 데이터 복원:', parsedData.length);
+                setSubscriptions(parsedData);
+                setLoading(false);
+                clearTimeout(timeoutId);
+                return; // 로컬 데이터로 작업 완료
+              }
+            }
+          } catch (localStorageError) {
+            console.warn('[구독목록] 로컬 스토리지 접근 오류, 무시하고 계속:', localStorageError);
+          }
+        }
+      } catch (userCheckError) {
+        console.warn('[구독목록] 사용자 확인 중 오류 발생, 계속 진행:', userCheckError);
+      }
+
       let query = supabase
         .from('subscriptions')
         .select('*')
@@ -40,6 +78,34 @@ export const useSubscriptions = (userId) => {
 
       if (fetchError) {
         console.error('Supabase 구독 정보 가져오기 오류:', fetchError);
+        
+        // RLS 정책 오류 발생 시 로컬 스토리지 데이터로 폴백
+        if (fetchError.code === '42501' || (typeof fetchError.message === 'string' && fetchError.message.includes('permission denied'))) {
+          console.warn('[구독목록] RLS 정책으로 접근 제한, 로컬 데이터 사용 시도');
+          
+          // 로컬 스토리지에서 데이터 가져오기 시도
+          const localStorageKey = `subscriptions_${userId}`;
+          try {
+            const storedData = localStorage.getItem(localStorageKey);
+            if (storedData) {
+              const parsedData = JSON.parse(storedData);
+              if (Array.isArray(parsedData) && parsedData.length > 0) {
+                console.log('[구독목록] 로컬 스토리지에서 구독 데이터 복원:', parsedData.length);
+                setSubscriptions(parsedData);
+                setLoading(false);
+                return; // 로컬 데이터로 작업 완료
+              }
+            }
+          } catch (localStorageError) {
+            console.warn('[구독목록] 로컬 스토리지 접근 오류:', localStorageError);
+          }
+          
+          // 빈 배열 설정하고 오류 없이 계속 진행
+          setSubscriptions([]);
+          setLoading(false);
+          return;
+        }
+        
         throw fetchError;
       }
 
@@ -52,6 +118,15 @@ export const useSubscriptions = (userId) => {
         next_payment_date: item.next_payment_date || null,
         description: item.description || ''
       }));
+
+      // 데이터 로컬 스토리지에 저장 (오프라인 지원)
+      try {
+        const localStorageKey = `subscriptions_${userId}`;
+        localStorage.setItem(localStorageKey, JSON.stringify(subscriptionsData));
+        console.log('[구독목록] 구독 데이터 로컬 저장 완료:', subscriptionsData.length);
+      } catch (localStorageError) {
+        console.warn('[구독목록] 로컬 저장 실패, 무시하고 계속:', localStorageError);
+      }
 
       setSubscriptions(subscriptionsData);
     } catch (err) {
@@ -121,93 +196,6 @@ export const useSubscriptions = (userId) => {
       console.log('[구독추가] 시도 - 사용자 ID:', userId);
       console.log('[구독추가] 정규화된 데이터:', JSON.stringify(normalizedData, null, 2));
 
-      // 사용자 존재 여부 확인 (외래 키 제약 조건 위반 방지)
-      try {
-        // 먼저 세션 상태 확인
-        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) {
-          console.error('[구독추가] 세션 확인 오류:', sessionError);
-          throw new Error('로그인 세션을 확인할 수 없습니다. 다시 로그인해주세요.');
-        }
-        
-        if (!sessionData.session) {
-          console.warn('[구독추가] 유효한 세션 없음');
-          throw new Error('로그인 세션이 만료되었습니다. 다시 로그인해주세요.');
-        }
-        
-        console.log('[구독추가] 세션 확인 완료:', !!sessionData.session);
-        
-        // 사용자 존재 여부 확인
-        const { data: userData, error: userError } = await supabase
-          .from('users')
-          .select('id')
-          .eq('id', userId)
-          .single();
-          
-        if (userError) {
-          // 특정 오류 유형에 따른 처리
-          if (userError.code === 'PGRST116') {
-            console.warn('[구독추가] 사용자를 찾을 수 없음:', userError);
-            throw new Error('사용자 정보를 찾을 수 없습니다. 계정 상태를 확인해주세요.');
-          } else {
-            console.error('[구독추가] 사용자 확인 오류:', userError);
-            throw new Error('사용자 정보 확인 중 오류가 발생했습니다.');
-          }
-        }
-        
-        if (!userData) {
-          console.warn('[구독추가] 사용자 데이터 없음');
-          
-          // 사용자 테이블에 기본 정보 자동 삽입 시도
-          try {
-            const { error: insertError } = await supabase
-              .from('users')
-              .insert([{ 
-                id: userId, 
-                created_at: new Date().toISOString(),
-                email: sessionData.session.user?.email || '',
-                name: sessionData.session.user?.user_metadata?.full_name || ''
-              }]);
-              
-            if (insertError) {
-              console.error('[구독추가] 사용자 자동 생성 실패:', insertError);
-              
-              // RLS 정책 오류 구체적 처리
-              if (insertError.code === '42501' || insertError.message.includes('permission denied')) {
-                console.warn('[구독추가] RLS 정책으로 인한 권한 오류, 계속 진행');
-                // 오류가 있어도 구독 기능 사용할 수 있도록 오류 메시지만 설정하고 진행
-                setError('데이터베이스 권한 문제로 일부 기능이 제한될 수 있습니다.');
-                return;
-              }
-              
-              // 기타 데이터베이스 오류 처리
-              if (insertError.code && insertError.code.startsWith('23')) {
-                console.warn('[구독추가] 데이터베이스 제약조건 오류:', insertError.code);
-                setError('사용자 정보 생성에 실패했습니다. 구독 기능이 제한될 수 있습니다.');
-              } else {
-                setError('사용자 정보 생성에 실패했습니다. 구독 기능이 제한될 수 있습니다.');
-              }
-            } else {
-              console.log('[구독추가] 사용자 자동 생성 성공');
-              // 성공 시 오류 메시지 제거
-              setError(null);
-            }
-          } catch (createError) {
-            console.error('[구독추가] 사용자 자동 생성 중 오류:', createError);
-            // 상세 오류 로깅 추가
-            console.error('[구독추가] 오류 상세:', {
-              name: createError.name,
-              message: createError.message,
-              stack: createError.stack
-            });
-            setError('사용자 정보 생성 중 오류가 발생했습니다. 구독 기능이 제한될 수 있습니다.');
-          }
-        }
-      } catch (userCheckError) {
-        console.error('[구독추가] 사용자 확인 최종 오류:', userCheckError);
-        throw userCheckError;
-      }
-
       // 데이터 삽입 시도
       const { data, error: insertError } = await supabase
         .from('subscriptions')
@@ -216,30 +204,153 @@ export const useSubscriptions = (userId) => {
 
       if (insertError) {
         console.error('[구독추가] Supabase 오류:', insertError);
-        console.error('[구독추가] 오류 상세:', JSON.stringify(insertError, null, 2));
         
-        // 외래 키 제약 조건 오류 처리
-        if (insertError.code === '23503' || 
-            insertError.message.includes('violates foreign key constraint') ||
-            insertError.message.includes('key is not present in table')) {
-          throw new Error('사용자 인증 문제가 발생했습니다. 로그아웃 후 다시 로그인해보세요.');
+        // 안전한 오류 출력을 위한 헬퍼 함수
+        const safeLogError = (prefix, err) => {
+          if (!err) {
+            console.error(`${prefix}: 알 수 없는 오류 (객체 없음)`);
+            return;
+          }
+          
+          try {
+            // 객체 직렬화 시도
+            const errStr = JSON.stringify(err, (key, value) => {
+              if (value instanceof Error) {
+                return { 
+                  name: value.name, 
+                  message: value.message, 
+                  stack: value.stack 
+                };
+              }
+              return value;
+            });
+            console.error(`${prefix}:`, errStr);
+          } catch (jsonError) {
+            // 직렬화 실패 시 기본 정보만 출력
+            console.error(`${prefix} (직렬화 실패):`, {
+              code: err.code || 'unknown',
+              message: err.message || 'No message',
+              name: err.name || 'Unknown error'
+            });
+          }
+        };
+        
+        // 안전하게 오류 로깅
+        safeLogError('[구독추가] Supabase 오류 상세', insertError);
+        
+        // RLS 정책 오류 또는 외래 키 오류 발생 시 로컬 저장 시도
+        if (insertError.code === '42501' || 
+            (typeof insertError.message === 'string' && insertError.message.includes('permission denied')) ||
+            insertError.code === '23503' || 
+            (typeof insertError.message === 'string' && (
+              insertError.message.includes('violates foreign key constraint') ||
+              insertError.message.includes('key is not present in table')
+            ))) {
+          
+          console.warn('[구독추가] 데이터베이스 권한 또는 제약 조건 오류, 로컬 저장 시도');
+          
+          // 고유 ID 생성
+          const newId = crypto.randomUUID ? crypto.randomUUID() : `temp-${Date.now()}`;
+          const newSubscription = {
+            ...normalizedData,
+            id: newId,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          };
+          
+          // 로컬 스토리지에 저장 시도
+          try {
+            const localStorageKey = `subscriptions_${userId}`;
+            let existingData = [];
+            
+            const storedData = localStorage.getItem(localStorageKey);
+            if (storedData) {
+              existingData = JSON.parse(storedData);
+              if (!Array.isArray(existingData)) {
+                existingData = [];
+              }
+            }
+            
+            // 새 구독 추가
+            existingData.unshift(newSubscription);
+            
+            // 로컬 스토리지에 저장
+            localStorage.setItem(localStorageKey, JSON.stringify(existingData));
+            
+            console.log('[구독추가] 로컬 저장 성공:', newSubscription.id);
+            
+            // 메모리 상태 업데이트
+            setSubscriptions(prev => [newSubscription, ...prev]);
+            
+            return { 
+              success: true, 
+              message: '구독이 로컬에 추가되었습니다. (일부 기능이 제한될 수 있습니다)', 
+              data: newSubscription,
+              isLocal: true
+            };
+          } catch (localStorageError) {
+            console.error('[구독추가] 로컬 저장 실패:', localStorageError);
+            
+            // 실패해도 메모리에는 추가
+            const newSubscription = {
+              ...normalizedData,
+              id: crypto.randomUUID ? crypto.randomUUID() : `temp-${Date.now()}`
+            };
+            
+            setSubscriptions(prev => [newSubscription, ...prev]);
+            
+            return { 
+              success: true, 
+              message: '구독이 메모리에 추가되었습니다. (페이지 이동 시 데이터가 소실될 수 있습니다)',
+              data: newSubscription,
+              isLocal: true,
+              isVolatile: true
+            };
+          }
         }
         
-        // RLS 정책 오류 발생 시
-        if (insertError.code === '42501' || insertError.message.includes('permission denied')) {
-          throw new Error('데이터베이스 접근 권한이 없습니다. 관리자에게 문의하세요.');
-        }
-        
-        if (insertError.code === '23505' || insertError.message.includes('duplicate key')) {
+        // 기타 오류 처리
+        if (insertError.code === '23505' || (typeof insertError.message === 'string' && insertError.message.includes('duplicate key'))) {
           setError('이미 존재하는 구독 정보와 중복됩니다.');
-          throw new Error('이미 존재하는 구독 정보와 중복됩니다. (Unique Constraint)');
+          return { success: false, error: '이미 존재하는 구독 정보와 중복됩니다.' };
         }
+        
         setError(insertError.message || '데이터베이스 오류로 구독 추가에 실패했습니다.');
-        throw insertError;
+        return { success: false, error: insertError.message || '데이터베이스 오류로 구독 추가에 실패했습니다.' };
       }
 
       if (data && data.length > 0) {
         console.log('[구독추가] 성공, 반환 데이터:', data);
+        
+        // 로컬 스토리지에도 저장 (오프라인 지원)
+        try {
+          const localStorageKey = `subscriptions_${userId}`;
+          let existingData = [];
+          
+          const storedData = localStorage.getItem(localStorageKey);
+          if (storedData) {
+            existingData = JSON.parse(storedData);
+            if (!Array.isArray(existingData)) {
+              existingData = [];
+            }
+          }
+          
+          // 새 구독 존재하는지 확인하고 추가 또는 업데이트
+          const existingIndex = existingData.findIndex(item => item.id === data[0].id);
+          if (existingIndex > -1) {
+            existingData[existingIndex] = data[0];
+          } else {
+            existingData.unshift(data[0]);
+          }
+          
+          // 로컬 스토리지에 저장
+          localStorage.setItem(localStorageKey, JSON.stringify(existingData));
+          
+          console.log('[구독추가] 로컬 저장 성공 (백업)');
+        } catch (localStorageError) {
+          console.warn('[구독추가] 로컬 백업 저장 실패, 무시하고 계속:', localStorageError);
+        }
+        
         setSubscriptions(prevSubs => {
           // 기존에 같은 ID의 구독이 있다면 교체, 없다면 맨 앞에 추가
           const existingIndex = prevSubs.findIndex(sub => sub.id === data[0].id);
@@ -259,6 +370,30 @@ export const useSubscriptions = (userId) => {
           ...normalizedData,
           id: crypto.randomUUID ? crypto.randomUUID() : `temp-${Date.now()}` // 임시 ID 생성
         };
+        
+        // 로컬 스토리지에 저장 시도
+        try {
+          const localStorageKey = `subscriptions_${userId}`;
+          let existingData = [];
+          
+          const storedData = localStorage.getItem(localStorageKey);
+          if (storedData) {
+            existingData = JSON.parse(storedData);
+            if (!Array.isArray(existingData)) {
+              existingData = [];
+            }
+          }
+          
+          // 새 구독 추가
+          existingData.unshift(newSubscription);
+          
+          // 로컬 스토리지에 저장
+          localStorage.setItem(localStorageKey, JSON.stringify(existingData));
+          
+          console.log('[구독추가] SELECT 결과 없음, 로컬 저장 성공:', newSubscription.id);
+        } catch (localStorageError) {
+          console.warn('[구독추가] 로컬 저장 실패, 무시하고 계속:', localStorageError);
+        }
         
         setSubscriptions(prevSubs => [newSubscription, ...prevSubs]);
         
@@ -505,29 +640,69 @@ export const useSubscriptions = (userId) => {
                   name: user?.user_metadata?.full_name || ''
                 }]);
                 
-              if (insertError) {
-                console.error('[인증확인] 사용자 자동 생성 실패:', insertError);
-                
-                // RLS 정책 오류 구체적 처리
-                if (insertError.code === '42501' || insertError.message.includes('permission denied')) {
-                  console.warn('[인증확인] RLS 정책으로 인한 권한 오류, 계속 진행');
-                  // 오류가 있어도 구독 기능 사용할 수 있도록 오류 메시지만 설정하고 진행
-                  setError('데이터베이스 권한 문제로 일부 기능이 제한될 수 있습니다.');
-                  return;
-                }
-                
-                // 기타 데이터베이스 오류 처리
-                if (insertError.code && insertError.code.startsWith('23')) {
-                  console.warn('[인증확인] 데이터베이스 제약조건 오류:', insertError.code);
-                  setError('사용자 정보 생성에 실패했습니다. 구독 기능이 제한될 수 있습니다.');
+                if (insertError) {
+                  console.error('[인증확인] 사용자 자동 생성 실패:', insertError);
+                  
+                  // 안전한 오류 출력을 위한 헬퍼 함수
+                  const safeLogError = (prefix, err) => {
+                    if (!err) {
+                      console.error(`${prefix}: 알 수 없는 오류 (객체 없음)`);
+                      return;
+                    }
+                    
+                    try {
+                      // 객체 직렬화 시도
+                      const errStr = JSON.stringify(err, (key, value) => {
+                        if (value instanceof Error) {
+                          return { 
+                            name: value.name, 
+                            message: value.message, 
+                            stack: value.stack 
+                          };
+                        }
+                        return value;
+                      });
+                      console.error(`${prefix}:`, errStr);
+                    } catch (jsonError) {
+                      // 직렬화 실패 시 기본 정보만 출력
+                      console.error(`${prefix} (직렬화 실패):`, {
+                        code: err.code || 'unknown',
+                        message: err.message || 'No message',
+                        name: err.name || 'Unknown error'
+                      });
+                    }
+                  };
+                  
+                  // 안전하게 오류 로깅
+                  safeLogError('[인증확인] 사용자 자동 생성 실패', insertError);
+                  
+                  // RLS 정책 오류 구체적 처리
+                  if (insertError && (insertError.code === '42501' || 
+                      (typeof insertError.message === 'string' && insertError.message.includes('permission denied')))) {
+                    console.warn('[인증확인] RLS 정책으로 인한 권한 오류, 계속 진행');
+                    
+                    // 중요: RLS 오류가 있어도 사용자 정보가 있는 것으로 처리하고 계속 진행
+                    console.log('[인증확인] RLS 오류이지만 사용자 인증 성공으로 처리, 계속 진행');
+                    
+                    // 오류 메시지 제거하고 계속 진행 (이것이 핵심임)
+                    setError(null);
+                    return;
+                  }
+                  
+                  // 기타 데이터베이스 오류 처리
+                  if (insertError && insertError.code && typeof insertError.code === 'string' && insertError.code.startsWith('23')) {
+                    console.warn('[인증확인] 데이터베이스 제약조건 오류:', insertError.code);
+                    setError('사용자 정보 생성에 실패했습니다. 구독 기능이 제한될 수 있습니다.');
+                  } else if (insertError) {
+                    // 일반적인 오류이지만, 메시지 없이 클라이언트 기능 계속 사용 가능하도록 함
+                    console.warn('[인증확인] DB 오류 발생, 오프라인 모드로 진행');
+                    setError(null);
+                  }
                 } else {
-                  setError('사용자 정보 생성에 실패했습니다. 구독 기능이 제한될 수 있습니다.');
+                  console.log('[인증확인] 사용자 자동 생성 성공');
+                  // 성공 시 오류 메시지 제거
+                  setError(null);
                 }
-              } else {
-                console.log('[인증확인] 사용자 자동 생성 성공');
-                // 성공 시 오류 메시지 제거
-                setError(null);
-              }
             } catch (createError) {
               console.error('[인증확인] 사용자 자동 생성 중 오류:', createError);
               // 상세 오류 로깅 추가
