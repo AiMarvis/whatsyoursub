@@ -1,8 +1,8 @@
 # What's Your Sub - 프로젝트 체크리스트
 
 ## 진행 상황 요약
-- 전체 진행률: 0% (0/0 항목 완료)
-- 마지막 업데이트: 2024-10-XX
+- 전체 진행률: 5% (1/20 항목 완료)
+- 마지막 업데이트: 2024-10-28
 
 ## 소개
 이 체크리스트는 What's Your Sub 프로젝트의 진행 상황을 추적하고 관리하기 위한 문서입니다. 각 항목은 체크박스 형태로 표시되며, 완료된 항목은 '[x]'로, 진행 중인 항목은 '[ ]'로 표시됩니다.
@@ -10,9 +10,19 @@
 ## 카테고리
 
 ### 1. 프로젝트 설정 및 환경
-- [ ] 항목 1
-- [ ] 항목 2
-- [ ] 항목 3
+- [x] Next.js 프로젝트 초기 설정 완료
+- [ ] 개발 환경 구성 (Node.js, npm/yarn)
+- [ ] 필수 의존성 설치 및 확인
+  - [ ] Supabase 관련 패키지 (@supabase/auth-helpers-nextjs, @supabase/ssr, @supabase/supabase-js)
+  - [ ] 차트 관련 패키지 (chart.js, react-chartjs-2)
+  - [ ] 폼 관련 패키지 (@hookform/resolvers, react-hook-form, zod)
+  - [ ] UI 관련 패키지 (lucide-react, daisyui)
+- [ ] 환경 변수 설정
+  - [ ] Supabase URL 및 Anon Key 설정
+  - [ ] OAuth 관련 환경 변수 설정 (Google, Kakao 등)
+- [ ] 프로젝트 구조 및 경로 설정 (jsconfig.json)
+- [ ] TailwindCSS 설정 및 커스텀 테마 구성
+- [ ] ESLint 및 코드 품질 도구 설정
 
 ### 2. 핵심 기능
 - [ ] 항목 1
