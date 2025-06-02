@@ -170,6 +170,7 @@ export default function DashboardPage() {
         
         // 오류 메시지 가공
         let errorMessage = result.error || '알 수 없는 오류가 발생했습니다.';
+        let errorType = 'error';
         
         // 특정 오류 패턴에 대한 사용자 친화적 메시지
         if (errorMessage.includes('로그인') || errorMessage.includes('인증') || errorMessage.includes('세션')) {
@@ -182,9 +183,17 @@ export default function DashboardPage() {
         } else if (errorMessage.includes('외래 키') || errorMessage.includes('제약 조건') || 
                   errorMessage.includes('foreign key') || errorMessage.includes('constraint')) {
           errorMessage = '데이터베이스 제약 조건 오류가 발생했습니다. 관리자에게 문의하세요.';
+        } else if (errorMessage.includes('permission denied') || errorMessage.includes('권한 없음') || 
+                  errorMessage.includes('RLS') || errorMessage.includes('42501')) {
+          // RLS 정책 오류는 경고로 표시하고 서비스 이용 제한을 알림
+          errorType = 'warning';
+          errorMessage = '데이터베이스 권한 제한으로 일부 기능이 제한될 수 있습니다. 오프라인 모드에서 계속 사용할 수 있습니다.';
+          
+          // 구독 목록 새로고침 시도
+          refreshSubscriptions();
         }
         
-        showStatusMessage(`구독 저장 실패: ${errorMessage}`, 'error');
+        showStatusMessage(`구독 저장 문제: ${errorMessage}`, errorType);
       }
     } catch (error) {
       console.error('[폼제출] 예외 발생:', error);
